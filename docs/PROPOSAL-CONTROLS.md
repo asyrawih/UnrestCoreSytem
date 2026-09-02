@@ -1,104 +1,110 @@
 # Proposal — Controls
 
-**Status: proposal only. Nothing here is implemented. Do not build it until asked.**
+**Status: baru proposal. Belum ada yang diimplementasikan. Jangan dibangun sebelum diperintahkan.**
 
-## 1. The problem
+## 1. Masalahnya
 
-> "The point of building the framework is that when I redesign the UI, the core system is
-> the same. So I need one easy thing for when I switch UI. Say I build a slider — when I
-> rework the UI, the implementation changes again. I need a high-level API for this."
+> "Tujuan gua bikin framework itu adalah ketika gua desain UI, padahal core system-nya sama
+> aja. Jadi gua butuh satu hal yang mudah ketika gua nge-switch UI. Semisal gua bikin slider,
+> ketika gua rombak UI-nya itu bakal berubah lagi implementasinya. Jadi gua butuh High API
+> untuk ini."
 
-The framework already keeps a redesign from touching the *core*: systems publish channels and
-handle commands, and they never learn what a button looks like. What it does not yet protect
-is the layer in between. A slider is not an element. It is a Frame that defines an axis, a
-knob you drag, a fill that follows, and a label that reports — four instances that only mean
-"slider" when something knows how they relate.
+Framework ini sudah menjaga agar perombakan UI tidak menyentuh *core*. Sistem menerbitkan
+channel dan menangani perintah, dan mereka tidak pernah tahu rupa sebuah tombol. Yang belum
+terlindungi adalah lapisan di antaranya.
 
-Today that knowledge has to live in a script, written against one particular tree:
+Slider itu bukan satu elemen. Dia adalah sebuah Frame yang menentukan sumbu, sebuah knob yang
+digeser, sebuah fill yang mengikuti, dan sebuah label yang melaporkan. Empat instance yang baru
+berarti "slider" kalau ada yang tahu hubungan di antara mereka.
+
+Hari ini pengetahuan itu harus tinggal di dalam skrip, ditulis untuk satu susunan pohon
+tertentu:
 
 ```luau
 local track = panel.Volume.Track
 local knob = track.Knob
 knob.InputBegan:Connect(function(input) ... end)
--- and a dozen more lines computing a fraction from AbsolutePosition
+-- dan belasan baris lagi yang menghitung pecahan dari AbsolutePosition
 ```
 
-Rework the design — knob inside the fill, track rotated, label moved out to a corner — and
-every line above is wrong. The core survived the redesign; the glue did not.
+Rombak desainnya, knob dipindah ke dalam fill, track diputar, label digeser ke sudut, dan
+setiap baris di atas jadi salah. Core-nya selamat dari perombakan; lemnya tidak.
 
-## 2. Why the pieces we have do not cover it
+## 2. Kenapa yang sudah ada belum cukup
 
-| Piece | What it handles | Why it is not enough |
+| Bagian | Yang ditangani | Kenapa belum cukup |
 | --- | --- | --- |
-| Tag + adapters | one instance, its events, its bindable properties | a slider is four instances that must be related |
-| `UnrestCommand` / `UnrestChannel` | one element ↔ one command or channel | cannot express "drag this, scaled against that" |
-| `Unrest:Query` | *finding* instances without hardcoded paths | you still write the behaviour yourself, per screen |
-| Presets | collapsing repeated attributes | a bundle of attributes, not a behaviour |
+| Tag dan adapter | satu instance, event-nya, properti yang boleh ditulis | slider itu empat instance yang harus saling berhubungan |
+| `UnrestCommand` / `UnrestChannel` | satu elemen ke satu perintah atau channel | tidak bisa menyatakan "geser yang ini, diukur terhadap yang itu" |
+| `Unrest:Query` | *menemukan* instance tanpa jalur yang dipaku | perilakunya tetap lu tulis sendiri, per layar |
+| Preset | memampatkan atribut yang berulang | dia bundel atribut, bukan perilaku |
 
-`Query` solves half the problem already: it finds things by role instead of by path. What is
-missing is that **the behaviour is written once, by the framework, instead of once per screen.**
-That is the high-level API being asked for.
+`Query` sudah menyelesaikan separuh masalah: dia menemukan sesuatu lewat peran, bukan lewat
+jalur. Yang belum ada adalah **perilakunya ditulis sekali oleh framework, bukan sekali per
+layar.** Itulah High API yang lu minta.
 
-## 3. The acceptance test
+## 3. Uji penerimaan
 
-Everything below should be judged against one scenario:
+Semua di bawah ini dinilai terhadap satu skenario:
 
-> Build `MenuV1` in Studio with a slider. Ship it. Later build `MenuV2` from scratch — a
-> different layout, different classes, a vertical slider instead of a horizontal one. Delete
-> `MenuV1`, drop in `MenuV2`, press Play.
+> Bangun `MenuV1` di Studio dengan sebuah slider. Rilis. Belakangan bangun `MenuV2` dari nol,
+> tata letak berbeda, kelas berbeda, slider vertikal menggantikan yang horizontal. Hapus
+> `MenuV1`, pasang `MenuV2`, tekan Play.
 >
-> **Zero lines of Luau change. No system, no bootstrap, no contract.**
+> **Nol baris Luau berubah. Tidak ada sistem, bootstrap, atau kontrak yang disentuh.**
 
-If a proposed design cannot pass that, it is the wrong design.
+Kalau sebuah rancangan tidak bisa lolos itu, rancangannya salah.
 
-## 4. The model
+## 4. Modelnya
 
-Three ideas, in order of size.
+Tiga gagasan, dari yang paling besar.
 
-**A control is a named behaviour over a subtree.** `UnrestControl = "Slider"` on a Frame says
-"the framework owns the behaviour of this subtree, and that behaviour is a slider". The
-framework supplies the dragging, the arithmetic, the painting and the dispatching.
+**Control adalah perilaku bernama di atas sebuah subtree.** `UnrestControl = "Slider"` pada
+sebuah Frame berarti "framework yang memiliki perilaku subtree ini, dan perilakunya adalah
+slider". Framework yang menyediakan penggeserannya, hitungannya, pelukisannya, dan
+pengirimannya.
 
-**A part is an instance playing a named role inside that subtree.** The control finds its
-parts by role, never by path. Move a part, rename its instance, reparent it three levels
-deeper — as long as it still declares the role, the control still finds it.
+**Part adalah instance yang memainkan peran bernama di dalam subtree itu.** Control menemukan
+part-nya lewat peran, tidak pernah lewat jalur. Pindahkan part-nya, ganti nama instance-nya,
+tanam tiga tingkat lebih dalam, selama perannya masih dinyatakan, control tetap menemukannya.
 
-**A part is required to have a capability, not a class.** The knob needs to report press and
-release. That is a question the adapter registry already answers (`Supports`), for every class
-it knows. So a knob may be a `TextButton`, an `ImageButton`, or anything else whose adapter
-declares `Press`. The fill needs a writable `Size`, which is `CanBind`. Controls state what
-they need; the existing capability model decides which classes qualify.
+**Part diwajibkan punya kemampuan, bukan kelas.** Knob harus bisa melaporkan tekan dan lepas.
+Itu pertanyaan yang sudah bisa dijawab adapter registry lewat `Supports`, untuk setiap kelas
+yang dia kenal. Jadi knob boleh `TextButton`, boleh `ImageButton`, boleh apa saja yang
+adapter-nya menyatakan `Press`. Fill butuh `Size` yang boleh ditulis, dan itu `CanBind`.
+Control menyatakan apa yang dia butuhkan, lalu model kemampuan yang sudah ada yang memutuskan
+kelas mana yang memenuhi.
 
-The third idea is what makes redesign safe. A control that demanded `ImageButton` would break
-the moment a designer preferred a `TextButton`.
+Gagasan ketiga inilah yang membuat perombakan aman. Control yang menuntut `ImageButton` akan
+patah begitu desainer lebih suka `TextButton`.
 
-## 5. Attribute surface
+## 5. Permukaan atribut
 
-On the control root:
+Di akar control:
 
-| Attribute | Meaning |
+| Atribut | Artinya |
 | --- | --- |
-| `UnrestControl` | the control's name, e.g. `"Slider"`. Declares the subtree. |
-| `UnrestChannel` | channel the control reads its value from. Retained, so it paints correctly on the first frame. |
-| `UnrestCommand` | command dispatched when the user changes the value. |
-| `UnrestMin` / `UnrestMax` | value domain. Default `0` and `1`. |
-| `UnrestStep` | quantisation. Default `0`, meaning continuous. |
-| `UnrestFormat` | format for the `Value` part, e.g. `"{value}%"`. |
+| `UnrestControl` | nama control-nya, misal `"Slider"`. Menandai subtree-nya. |
+| `UnrestChannel` | channel tempat control membaca nilainya. Retained, jadi lukisannya benar sejak frame pertama. |
+| `UnrestCommand` | perintah yang dikirim ketika pengguna mengubah nilainya. |
+| `UnrestMin` / `UnrestMax` | rentang nilai. Bawaannya `0` dan `1`. |
+| `UnrestStep` | kelipatan. Bawaannya `0`, artinya kontinu. |
+| `UnrestFormat` | format untuk part `Value`, misal `"{value}%"`. |
 
-On each part, one attribute:
+Di setiap part, satu atribut:
 
-| Attribute | Meaning |
+| Atribut | Artinya |
 | --- | --- |
-| `UnrestPart` | the role this instance plays inside its control, e.g. `"Track"`. |
+| `UnrestPart` | peran yang dimainkan instance ini di dalam control-nya, misal `"Track"`. |
 
-`UnrestPart` is deliberately **not** `UnrestRole`. Role is identity in the whole DataModel and
-is what `Query` selects on; part is a position inside one control. Overloading one attribute
-with both meanings would make a knob named `Knob` in two different sliders collide in a query,
-and would make the control resolution depend on global uniqueness it cannot enforce.
+`UnrestPart` sengaja **bukan** `UnrestRole`. Role itu identitas di seluruh DataModel dan itulah
+yang diseleksi `Query`; part itu posisi di dalam satu control. Menumpangkan dua makna pada satu
+atribut akan membuat knob bernama `Knob` di dua slider berbeda saling bertabrakan di sebuah
+query, dan membuat resolusi control bergantung pada keunikan global yang tidak bisa dia jamin.
 
-## 6. Worked example
+## 6. Contoh nyata
 
-### V1 — horizontal
+### V1, horizontal
 
 ```
 Volume (Frame)          UnrestControl = "Slider"
@@ -111,12 +117,12 @@ Volume (Frame)          UnrestControl = "Slider"
   Readout (TextLabel)   UnrestPart = "Value"
 ```
 
-One tag on an ancestor, four `UnrestPart` attributes, four control attributes. No code.
+Satu tag di sebuah ancestor, empat atribut `UnrestPart`, empat atribut control. Tanpa kode.
 
-### V2 — the redesign
+### V2, hasil perombakan
 
-Vertical. The knob is now a `TextButton`. The fill is a `CanvasGroup`. The readout moved
-inside the track. The instances are renamed to suit the new design.
+Vertikal. Knob-nya sekarang `TextButton`. Fill-nya `CanvasGroup`. Readout-nya pindah ke dalam
+track. Nama instance-nya diganti menyesuaikan desain baru.
 
 ```
 VolumeDial (Frame)      UnrestControl = "Slider"
@@ -129,96 +135,102 @@ VolumeDial (Frame)      UnrestControl = "Slider"
     Number (TextLabel)  UnrestPart = "Value"
 ```
 
-Different classes, different names, different tree, different axis. **The four control
-attributes are identical and no Luau changed.** That is the whole proposal in one diff.
+Kelas berbeda, nama berbeda, pohon berbeda, sumbu berbeda. **Keempat atribut control-nya sama
+persis dan tidak ada Luau yang berubah.** Itulah seluruh isi proposal ini dalam satu diff.
 
-Orientation is inferred from the Track's `AbsoluteSize` — taller than wide means vertical —
-with `UnrestOrientation` available when a square track makes inference a coin toss.
+Orientasi disimpulkan dari `AbsoluteSize` milik Track, lebih tinggi daripada lebar berarti
+vertikal, dengan `UnrestOrientation` tersedia untuk track yang persegi, di mana penyimpulan
+jadi untung-untungan.
 
-## 7. Built-in catalogue
+## 7. Katalog bawaan
 
-Each ships with a part contract. `req` means the control refuses to run without it.
+Masing-masing datang dengan kontrak part. `wajib` berarti control menolak jalan tanpanya.
 
-| Control | Parts | Capability each part needs |
+| Control | Part | Kemampuan yang dibutuhkan tiap part |
 | --- | --- | --- |
-| `Slider` | Track `req`, Knob, Fill, Value | Track: any GuiObject. Knob: `Press`. Fill: bindable `Size`. Value: a bindable text property. |
-| `Toggle` | Button `req`, On, Off, Value | Button: `Active`. On/Off: bindable `Visible`. |
-| `Stepper` | Increment `req`, Decrement `req`, Value | buttons: `Active`. Value: bindable text. |
-| `ProgressBar` | Track `req`, Fill `req`, Value | as Slider, minus the input. |
-| `TabGroup` | Tab `req` (many), Panel (many, matched by a key) | Tab: `Active`. Panel: bindable `Visible`. |
+| `Slider` | Track `wajib`, Knob, Fill, Value | Track: GuiObject apa pun. Knob: `Press`. Fill: `Size` yang boleh ditulis. Value: properti teks yang boleh ditulis. |
+| `Toggle` | Button `wajib`, On, Off, Value | Button: `Active`. On/Off: `Visible` yang boleh ditulis. |
+| `Stepper` | Increment `wajib`, Decrement `wajib`, Value | tombol: `Active`. Value: teks yang boleh ditulis. |
+| `ProgressBar` | Track `wajib`, Fill `wajib`, Value | seperti Slider, tanpa bagian input. |
+| `TabGroup` | Tab `wajib` (banyak), Panel (banyak, dipasangkan lewat kunci) | Tab: `Active`. Panel: `Visible` yang boleh ditulis. |
 
-`ProgressBar` is `Slider` with the input removed, and shipping both makes the distinction
-explicit rather than a matter of whether you remembered to add a knob.
+`ProgressBar` itu `Slider` tanpa input, dan mengirim keduanya membuat pembedaannya eksplisit,
+bukan bergantung pada apakah lu ingat memasang knob atau tidak.
 
-## 8. Resolution and liveness
+## 8. Resolusi dan keaktifan
 
-Part resolution follows the rule already established twice in this codebase: **one definition,
-used by everyone who needs the answer.** `Selector.ancestorChain` is the precedent — `Elements`
-resolves with it and `Query` watches the chain it returns, so the two cannot disagree.
+Resolusi part mengikuti aturan yang sudah dua kali ditegakkan di codebase ini: **satu
+definisi, dipakai semua pihak yang butuh jawabannya.** `Selector.ancestorChain` adalah
+presedennya. `Elements` meresolusi dengan itu dan `Query` mengawasi rantai yang dikembalikannya,
+sehingga keduanya tidak mungkin berbeda pendapat.
 
-- A control resolves parts by scanning its own subtree for `UnrestPart`, nearest first.
-- A nested control's subtree is excluded from its ancestor's scan. A slider inside a tab panel
-  belongs to the slider.
-- Two instances claiming the same part is a warning, and the nearest wins. Silently picking one
-  at random is how a redesign breaks a week later.
-- Parts are watched live. A part added, removed, renamed or reparented re-resolves the control,
-  because that is exactly what happens while somebody is designing with the game running.
+- Control meresolusi part dengan memindai subtree-nya sendiri untuk `UnrestPart`, terdekat
+  lebih dulu.
+- Subtree milik control bersarang dikecualikan dari pemindaian induknya. Slider di dalam panel
+  tab adalah milik slider itu.
+- Dua instance yang mengaku part yang sama adalah peringatan, dan yang terdekat menang. Memilih
+  salah satu diam-diam adalah cara sebuah perombakan patah seminggu kemudian.
+- Part diawasi secara langsung. Part yang ditambah, dihapus, diganti nama, atau dipindah induk
+  akan meresolusi ulang control-nya, karena justru itu yang terjadi saat orang sedang mendesain
+  dengan game berjalan.
 
-## 9. What happens when it is wrong
+## 9. Apa yang terjadi kalau salah
 
-The convention this codebase already uses is **code raises, attributes warn**, and it applies
-here unchanged. A control is declared in Studio by somebody not watching the output window, so
-a broken control must never take the screen down.
+Konvensi yang sudah dipakai codebase ini adalah **kode melempar error, atribut memperingatkan**,
+dan itu berlaku di sini tanpa perubahan. Control dinyatakan di Studio oleh orang yang tidak
+sedang melihat output window, jadi control yang rusak tidak boleh menjatuhkan layar.
 
-| Situation | Behaviour |
+| Keadaan | Perilaku |
 | --- | --- |
-| Missing a required part | warn once, naming the control, the missing part and the subtree. The control stays inert. |
-| Optional part absent | silent. A slider with no Value label is a slider with no label. |
-| Part cannot do what the control needs | warn, naming the instance, its class, and which classes qualify. Reuses the adapter registry's existing `Describe`. |
-| Unknown control name | warn, listing the registered controls. |
-| Part disappears at runtime | required: revert to inert and warn. Optional: stop driving it. |
+| Part wajib tidak ada | peringatkan sekali, sebutkan control-nya, part yang hilang, dan subtree-nya. Control diam. |
+| Part opsional tidak ada | diam saja. Slider tanpa label Value ya slider tanpa label. |
+| Part tidak mampu melakukan yang dibutuhkan | peringatkan, sebutkan instance-nya, kelasnya, dan kelas mana yang memenuhi. Memakai ulang `Describe` milik adapter registry. |
+| Nama control tidak dikenal | peringatkan, sebutkan daftar control yang terdaftar. |
+| Part hilang saat runtime | wajib: kembali diam dan peringatkan. Opsional: berhenti menggerakkannya. |
 
-Plus a validator, `Controls:Validate(screenGui)`, returning a report rather than warnings — so
-a redesign can be checked before pressing Play, and later wired to a button in the Studio
-plugin.
+Ditambah sebuah validator, `Controls:Validate(screenGui)`, yang mengembalikan laporan alih-alih
+peringatan. Jadi sebuah perombakan bisa diperiksa sebelum menekan Play, dan nanti bisa
+disambungkan ke tombol di plugin Studio.
 
-## 10. Throttling, and why the contract already knows the answer
+## 10. Pembatasan laju, dan kenapa kontraknya sudah tahu jawabannya
 
-A dragged slider produces input every frame. Dispatching each one would spend a player's rate
-limit in well under a second, and the server would start refusing — the framework fighting its
-own security layer.
+Slider yang digeser menghasilkan input tiap frame. Mengirim semuanya akan menghabiskan jatah
+rate limit pemain dalam waktu jauh di bawah satu detik, dan server mulai menolak. Framework
+berkelahi dengan lapisan keamanannya sendiri.
 
-The fix is already in the codebase. `Music.SetVolume` declares `RateLimit = { Count = 8,
-Window = 1 }` in `Net/Contracts.luau`. A control can **read its own command's contract** and
-throttle to it, rather than shipping a magic number that drifts out of step with the server.
+Perbaikannya sudah ada di codebase. `Music.SetVolume` menyatakan `RateLimit = { Count = 8,
+Window = 1 }` di `Net/Contracts.luau`. Sebuah control bisa **membaca kontrak perintahnya
+sendiri** lalu menyesuaikan lajunya ke situ, bukan menyimpan angka ajaib yang lama-lama
+melenceng dari server.
 
-The proposed shape:
+Bentuk yang diusulkan:
 
-- paint locally at full rate, so dragging feels immediate;
-- dispatch at the contract's rate, minus a margin;
-- always dispatch a final value on release, so the authoritative state matches what the player
-  let go of.
+- lukis lokal dengan laju penuh, supaya penggeserannya terasa langsung;
+- kirim mengikuti laju kontrak, dikurangi margin;
+- selalu kirim satu nilai final saat dilepas, supaya keadaan otoritatif sama dengan yang
+  ditinggalkan pemain.
 
-This is worth stating loudly: it means a control's network behaviour is derived from the same
-declaration the server enforces, and the two cannot drift.
+Ini layak ditegaskan: artinya perilaku jaringan sebuah control diturunkan dari deklarasi yang
+sama dengan yang ditegakkan server, dan keduanya tidak mungkin melenceng.
 
-## 11. Code API
+## 11. API dari sisi kode
 
-Controls are declarative first, but code must be able to reach one without knowing its visuals.
+Control bersifat deklaratif lebih dulu, tapi kode harus tetap bisa menjangkau satu control
+tanpa tahu rupanya.
 
 ```luau
-local volume = unrest:Control("VolumeDial")   -- by the root's UnrestRole, or its name
+local volume = unrest:Control("VolumeDial")   -- lewat UnrestRole akarnya, atau namanya
 
-volume:Get()                 -- current value
-volume:Set(0.4)              -- paint and dispatch, as if the player had done it
-volume.Changed:Connect(fn)   -- fires on user change, not on channel echo
-volume:Parts()               -- the resolved parts, for the rare case that needs them
+volume:Get()                 -- nilai saat ini
+volume:Set(0.4)              -- lukis dan kirim, seolah pemain yang melakukannya
+volume.Changed:Connect(fn)   -- menyala saat perubahan dari pengguna, bukan gema channel
+volume:Parts()               -- part yang teresolusi, untuk kasus langka yang membutuhkannya
 ```
 
-`Changed` firing only on user change matters: a control that fired on its own channel echo
-would loop the moment somebody subscribed and republished.
+`Changed` yang hanya menyala pada perubahan pengguna itu penting. Control yang menyala oleh
+gema channel-nya sendiri akan berputar begitu ada yang berlangganan lalu menerbitkan ulang.
 
-Registering a custom control mirrors `Adapters:Register`:
+Mendaftarkan control buatan sendiri mencerminkan `Adapters:Register`:
 
 ```luau
 unrest.Controls:Register({
@@ -228,68 +240,76 @@ unrest.Controls:Register({
         Needle = { Required = true, Needs = "Press" },
         Value = { Bindable = "Text" },
     },
-    Attach = function(control) ... end,   -- returns a teardown
+    Attach = function(control) ... end,   -- mengembalikan fungsi pembongkarnya
 })
 ```
 
-Custom controls must be as cheap to write as built-ins, or every design that does not fit the
-catalogue falls back to hand-written glue and the proposal has failed.
+Control buatan sendiri harus semurah control bawaan untuk ditulis. Kalau tidak, setiap desain
+yang tidak masuk katalog akan jatuh kembali ke lem tulisan tangan, dan proposal ini gagal.
 
-## 12. How it composes with what exists
+## 12. Bagaimana dia menyatu dengan yang sudah ada
 
-- **Tag** — unchanged. A control root must be inside a managed subtree; the cascading tag
-  already covers everything below it.
-- **Adapters** — reused for capability checks and for driving parts. No new per-class knowledge.
-- **Attributes and inheritance** — `UnrestControl` is per-element intent, so it is **not**
-  inheritable. `UnrestFormat` on a control root applies to the Value part, which is a small
-  overload worth calling out.
-- **Presets** — a preset may declare a control's attributes, so `UnrestPreset = "VolumeSlider"`
-  can carry the channel, command, domain and format together. This is where presets pay off most.
-- **Bridge and contracts** — unchanged. A control dispatches the same commands through the same
-  gate. **A control grants no privilege**, exactly as an attribute does not.
-- **Query** — unchanged and still the escape hatch for behaviour no control expresses.
+- **Tag** tidak berubah. Akar control harus berada di dalam subtree yang terkelola, dan tag
+  berjenjang sudah mencakup semua di bawahnya.
+- **Adapter** dipakai ulang untuk memeriksa kemampuan dan untuk menggerakkan part. Tidak ada
+  pengetahuan per kelas yang baru.
+- **Atribut dan pewarisan**: `UnrestControl` itu niat per elemen, jadi dia **tidak** diwariskan.
+  `UnrestFormat` di akar control berlaku untuk part Value, dan penumpangan makna kecil itu
+  perlu disebut terang-terangan.
+- **Preset**: sebuah preset boleh menyatakan atribut control, sehingga
+  `UnrestPreset = "VolumeSlider"` bisa membawa channel, perintah, rentang, dan format sekaligus.
+  Di sinilah preset paling terbayar.
+- **Bridge dan kontrak** tidak berubah. Control mengirim perintah yang sama lewat gerbang yang
+  sama. **Control tidak memberi hak istimewa apa pun**, persis seperti atribut.
+- **Query** tidak berubah dan tetap jadi jalan keluar untuk perilaku yang tidak bisa dinyatakan
+  control mana pun.
 
-## 13. Implementation phases
+## 13. Tahapan implementasi
 
-| Phase | Delivers | Proves |
+| Tahap | Yang dihasilkan | Yang dibuktikan |
 | --- | --- | --- |
-| 1 | Control registry, part resolution, liveness, failure behaviour, and `Slider` | the model works on the hardest common case |
-| 2 | `Toggle`, `Stepper`, `ProgressBar` | the machinery generalises and new controls are cheap |
-| 3 | `unrest:Control()`, `Controls:Validate()`, plugin lint button | the redesign workflow, not just the runtime |
-| 4 | `TabGroup`, custom-control authoring guide | extensibility beyond the catalogue |
+| 1 | Registry control, resolusi part, keaktifan, perilaku saat salah, dan `Slider` | modelnya bekerja pada kasus umum tersulit |
+| 2 | `Toggle`, `Stepper`, `ProgressBar` | mesinnya menyamaratakan dan control baru jadi murah |
+| 3 | `unrest:Control()`, `Controls:Validate()`, tombol lint di plugin | alur kerja perombakan, bukan cuma runtime-nya |
+| 4 | `TabGroup`, panduan menulis control sendiri | keterluasan di luar katalog |
 
-Phase 1 is the only one worth committing to now. If the slider does not survive a real
-redesign, phases 2 to 4 are building on sand.
+Hanya Tahap 1 yang layak dikomitmenkan sekarang. Kalau slider-nya tidak selamat dari perombakan
+sungguhan, tahap 2 sampai 4 dibangun di atas pasir.
 
-## 14. What this does not solve
+## 14. Yang tidak diselesaikan proposal ini
 
-Honesty about the boundary, so the proposal is not oversold:
+Jujur soal batasnya, supaya proposal ini tidak dijual berlebihan:
 
-- **Layout and styling are still yours.** Controls drive behaviour; they never set a colour, a
-  corner radius, or a position that is not part of the value they represent.
-- **A design with no equivalent part is not covered.** A slider whose value is expressed as a
-  hue rather than a length has no `Fill`; it needs a custom control. The catalogue is a floor.
-- **Animation is out of scope** for phase 1. Controls set values; tweening them is a separate
-  concern and folding it in early would couple two things that change at different rates.
-- **It adds concepts.** Tag, attribute, preset, and now control and part. The bet is that a
-  control removes more glue than the concept costs. If the slider does not clearly pay for
-  itself, the honest move is to drop the idea rather than ship the other four controls.
+- **Tata letak dan gaya tetap urusan lu.** Control menggerakkan perilaku; dia tidak pernah
+  menyetel warna, radius sudut, atau posisi yang bukan bagian dari nilai yang dia wakili.
+- **Desain yang tidak punya padanan part tidak tercakup.** Slider yang nilainya dinyatakan
+  sebagai rona warna alih-alih panjang tidak punya `Fill`, dan butuh control buatan sendiri.
+  Katalognya itu lantai, bukan langit-langit.
+- **Animasi di luar cakupan** Tahap 1. Control menyetel nilai; menghaluskannya adalah urusan
+  terpisah, dan menyatukannya terlalu dini akan mengikat dua hal yang berubah dengan laju
+  berbeda.
+- **Dia menambah konsep.** Tag, atribut, preset, dan sekarang control dan part. Taruhannya,
+  satu control menghapus lebih banyak lem daripada biaya konsepnya. Kalau slider-nya tidak
+  jelas terbayar, langkah yang jujur adalah membatalkan idenya, bukan mengirim empat control
+  sisanya.
 
-## 15. Open questions
+## 15. Pertanyaan terbuka
 
-These change the design and are yours to decide:
+Ini mengubah rancangannya, dan keputusannya di lu:
 
-1. **`UnrestPart` as a separate attribute, or reuse `UnrestRole` scoped to the subtree?** The
-   proposal argues separate; reusing is one fewer concept but couples control resolution to
-   global role uniqueness.
-2. **Should a control root also be adoptable as a plain element?** Allowing both means
-   `UnrestCommand` and `UnrestControl` could sit on one instance with unclear precedence.
-3. **Orientation inferred from the track, or always explicit?** Inference makes a redesign
-   work untouched; explicitness never surprises.
-4. **Dispatch throttled during a drag, or only on release?** Throttled is more responsive for
-   shared state; release-only is cheaper and never partially applies.
-5. **Is `Slider` the right first control**, or is `Toggle` a cheaper way to prove the model?
+1. **`UnrestPart` sebagai atribut terpisah, atau menumpang `UnrestRole` yang dibatasi ke
+   subtree?** Proposal ini memilih terpisah. Menumpang berarti satu konsep lebih sedikit, tapi
+   mengikat resolusi control pada keunikan role secara global.
+2. **Apakah akar control juga boleh diadopsi sebagai elemen biasa?** Kalau boleh, `UnrestCommand`
+   dan `UnrestControl` bisa duduk di satu instance dengan urutan menang yang tidak jelas.
+3. **Orientasi disimpulkan dari track, atau selalu dinyatakan?** Penyimpulan membuat perombakan
+   jalan tanpa disentuh; penyataan tidak pernah mengejutkan.
+4. **Pengiriman dibatasi lajunya selama digeser, atau hanya saat dilepas?** Dibatasi lebih
+   responsif untuk keadaan bersama; hanya saat dilepas lebih murah dan tidak pernah separuh
+   diterapkan.
+5. **Apakah `Slider` control pertama yang tepat**, atau `Toggle` lebih murah untuk membuktikan
+   modelnya?
 
 ## 16. Status
 
-Proposal. No code has been written and none should be until you say so.
+Proposal. Belum ada kode yang ditulis dan belum boleh ditulis sampai lu bilang.
