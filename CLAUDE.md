@@ -35,6 +35,11 @@ selene src && stylua --check src
   decides what a client may ask for.
 - Layer map: `Core` (never touches an Instance) -> `Bridge` -> `Elements` (never touches a
   system). `Net` is the same Bridge across the client/server line.
+- **A tag outlives its instance.** `Destroy()` takes an instance out of
+  `CollectionService:GetTagged` but leaves the tag on it, so `HasTag` answers `true` forever
+  after. `Selector.isManaged` therefore asks `IsDescendantOf(game)` first: managed means
+  *tagged and in the DataModel*, which is the same line `GetTagged` and the tag-added /
+  tag-removed signals draw. Anything that reads the tag directly has to remember this.
 
 ## Attribute resolution (`src/shared/Elements/init.luau`)
 

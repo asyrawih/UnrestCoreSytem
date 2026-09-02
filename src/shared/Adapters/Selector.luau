@@ -24,8 +24,9 @@
     been answered in two places, the two answers have drifted -- so:
 
         the cascade      -- `isManaged` / `cascadeUnder` / `isGate`, which instances the tag
-                            manages, or a cascaded button is adopted, wired, and invisible to
-                            the query that asked for it;
+                            manages -- including the edge of the world, because `Destroy()`
+                            leaves the tag behind -- or a cascaded button is adopted, wired,
+                            and invisible to the query that asked for it;
         the resolution   -- `ancestorChain` / `inheritedProviders` / `presetFor` /
                             `attributeOf`, what an attribute is worth, or the framework reports
                             a group on an element that no query can find.
@@ -67,6 +68,28 @@ local function isBoundary(instance: Instance): boolean
     end
     local parent = instance.Parent
     return parent ~= nil and parent == game
+end
+
+--[[
+    Whether the instance is still in the world at all.
+
+    `Destroy()` does not take the framework tag off the instance it was on. It only takes the
+    instance out of `CollectionService:GetTagged`, and `HasTag` goes on answering `true` for
+    the rest of the dead instance's life -- so a predicate that reads the tag alone calls a
+    destroyed screen managed forever, and every table keyed by it holds a reference to
+    something the game has finished with.
+
+    Membership of the DataModel is the line CollectionService itself draws. A tagged instance
+    joins `GetTagged` when it is parented in and leaves it when it is parented out or
+    destroyed, and `GetInstanceAddedSignal` / `GetInstanceRemovedSignal` fire on exactly those
+    two moments -- which is also why an instance tagged while it is still being assembled loses
+    nothing by this: it is adopted when it arrives, by the signal that announces the arrival.
+
+    Asking the same question here is what keeps the predicate and the sources that feed it
+    from disagreeing about what the tag means.
+]]
+local function isPresent(instance: Instance): boolean
+    return instance:IsDescendantOf(game)
 end
 
 --[[
@@ -278,7 +301,7 @@ end
     thing they may well have meant.
 ]]
 local function cascadeReaches(instance: Instance): boolean
-    if isBoundary(instance) or isIgnored(instance) then
+    if not isPresent(instance) or isBoundary(instance) or isIgnored(instance) then
         return false
     end
     if CollectionService:HasTag(instance, Constants.Tag) then
@@ -312,16 +335,26 @@ function Selector.cascades(tag: string): boolean
 end
 
 --[[
-    The one question. An instance is managed when it carries the framework tag, or when it is
-    a `GuiObject` the cascade reaches.
+    The one question. An instance in the DataModel is managed when it carries the framework
+    tag, or when it is a `GuiObject` the cascade reaches.
 
-    A direct tag is unconditional, including inside an ignored subtree: `UnrestIgnore` opts a
-    subtree out of a *cascade*, and tagging one `UIStroke` inside it to bind a channel to its
-    colour has to keep working. That is also why the `GuiObject` test sits after the tag and
-    not before it -- a `UIListLayout` is never swept up, but it is adopted the moment somebody
-    tags it themselves.
+    A direct tag is unconditional *within the world*, including inside an ignored subtree:
+    `UnrestIgnore` opts a subtree out of a *cascade*, and tagging one `UIStroke` inside it to
+    bind a channel to its colour has to keep working. That is also why the `GuiObject` test
+    sits after the tag and not before it -- a `UIListLayout` is never swept up, but it is
+    adopted the moment somebody tags it themselves.
+
+    It is not unconditional across the world's edge, and that is the point of `isPresent`
+    coming first. `Destroy()` leaves the tag on the instance, so a destroyed screen answered
+    yes here forever: released on `Destroying` and then handed straight back by the very next
+    thing to ask -- the tag-removed handler re-deriving coverage. Both `Elements` and `Query`
+    read that answer, so both leaked, and both stop leaking by this one line rather than by a
+    liveness check apiece.
 ]]
 function Selector.isManaged(instance: Instance): boolean
+    if not isPresent(instance) then
+        return false
+    end
     if CollectionService:HasTag(instance, Constants.Tag) then
         return true
     end
