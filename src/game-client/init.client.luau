@@ -13,7 +13,6 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Game = require(ReplicatedStorage:WaitForChild("Game"))
 local Unrest = require(ReplicatedStorage.Unrest)
 
 local unrest = Unrest:Start()
@@ -21,8 +20,6 @@ local unrest = Unrest:Start()
 --- `Role` reads the element's `UnrestRole` attribute, falling back to its `Name`.
 unrest:Query({ Tag = unrest.Tag, Role = "PlayButton" }, {
     Active = function()
-        --- Whether this stays local or crosses the wire is the contract's decision, never
-        --- this line's. `Music.Play` sets `AllowClient`, so it crosses and is checked there.
-        unrest:Dispatch(Game.Commands.MusicPlay, "Lobby")
+        print("Test")
     end,
 })

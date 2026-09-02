@@ -34,7 +34,6 @@
 ]]
 
 local RunService = game:GetService("RunService")
-local ServerScriptService = game:GetService("ServerScriptService")
 
 local Constants = require(script.Constants)
 local Transport = require(script.Net.Transport)
@@ -101,9 +100,8 @@ local Unrest = {
     The singleton's shape: `Types.Unrest` plus the one door that only exists here.
 
     `OpenGateway` is not on `Types.Unrest` because that type is realm-neutral and the gateway
-    is not: it lives in ServerScriptService, and a client that could name it in a type could
-    not require it anyway. `Start` is restated ahead of the intersection so that the value
-    `:Start()` hands back is this shape rather than the narrower one.
+    is not: only the server ever opens one. `Start` is restated ahead of the intersection so
+    that the value `:Start()` hands back is this shape rather than the narrower one.
 ]]
 export type Singleton = {
     Start: (self: Singleton) -> Singleton,
@@ -178,16 +176,23 @@ end
     it. A bootstrap that registers a system after `:Start()` -- a plugin loaded at runtime, say
     -- still gets to decide when the door opens, and can see that it decided.
 
-    The gateway is fetched rather than required at the top of this file on purpose: this module
-    is replicated, and `ServerScriptService.Unrest.Net.Server` is not. The policy is never
-    shipped to the machines it polices, so the require has to happen inside a server-only call.
+    The gateway used to live in ServerScriptService, and the reason written here used to be
+    that policy must not be shipped to the machines it polices. That reason was wrong. The
+    rate limits sit in `Constants` and the `Authorize` predicates sit in the game's contracts,
+    and both of those have always been replicated -- so hiding the gateway hid nothing that a
+    client could not already read.
+
+    What actually protects the gateway is that only the server ever runs it, and that is a
+    property of the realm check below, not of where the file sits. So it lives here with the
+    rest of the framework, `Server.new` refuses to build anywhere but the server, and there is
+    no separate server folder for somebody to mistake for their own and delete.
 ]]
 function Unrest:OpenGateway(): ()
     if context ~= "Server" then
         error(
             "[Unrest] :OpenGateway() is server-only. The gateway is the authority a client is checked "
-                .. "against; it lives in ServerScriptService and no client can reach it. Call :Start() here "
-                .. "and leave the door to the server bootstrap.",
+                .. "against, and only the server ever runs it. Call :Start() here and leave the door to "
+                .. "the server bootstrap.",
             0
         )
     end
@@ -199,7 +204,7 @@ function Unrest:OpenGateway(): ()
         )
     end
 
-    local built = require(ServerScriptService.Unrest.Net.Server).new(bridge)
+    local built = require(script.Net.Server).new(bridge)
     gateway = built
     built:Start()
 end

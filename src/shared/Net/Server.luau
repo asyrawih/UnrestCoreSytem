@@ -41,18 +41,18 @@
 ]]
 
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
-local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
-local Net = require(ReplicatedStorage.Unrest.Net)
-local NetTypes = require(ReplicatedStorage.Unrest.Net.Types)
-local Primitives = require(ReplicatedStorage.Unrest.Primitives)
-local Remotes = require(ReplicatedStorage.Unrest.Net.Transports.Remotes)
-local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
-local Transport = require(ReplicatedStorage.Unrest.Net.Transport)
-local Types = require(ReplicatedStorage.Unrest.Types)
-local Validate = require(ReplicatedStorage.Unrest.Net.Validate)
+local Constants = require(script.Parent.Parent.Constants)
+local Contracts = require(script.Parent.Contracts)
+local Net = require(script.Parent)
+local NetTypes = require(script.Parent.Types)
+local Primitives = require(script.Parent.Parent.Primitives)
+local Remotes = require(script.Parent.Transports.Remotes)
+local Signal = require(script.Parent.Parent.Util.Signal)
+local Transport = require(script.Parent.Transport)
+local Types = require(script.Parent.Parent.Types)
+local Validate = require(script.Parent.Validate)
 
 type InvokeResult = NetTypes.InvokeResult
 type RejectionReason = NetTypes.RejectionReason
@@ -115,7 +115,23 @@ local function consume(bucket: Bucket, count: number, window: number): boolean
     return true
 end
 
+--[[
+    Membangun gerbang. Server saja, dan penjaganya di sini bukan formalitas.
+
+    Modul ini tinggal di ReplicatedStorage, jadi sebuah client bisa membacanya. Itu memang
+    tidak apa-apa: keamanannya tidak pernah berasal dari menyembunyikan kode. Angka rate limit
+    ada di `Constants` dan fungsi `Authorize` ada di kontrak game, dan keduanya sudah
+    direplikasi sejak awal. Yang menjaga adalah **hanya server yang menjalankan gerbang ini**,
+    dan itu dijamin oleh pemeriksaan realm di bawah, bukan oleh letak berkasnya.
+]]
 function Server.new(bridge: Types.Bridge): NetTypes.NetServer
+    if not RunService:IsServer() then
+        error(
+            "[Unrest.Net.Server] gerbang hanya boleh dibangun di server. Membangunnya di client "
+                .. "tidak mencegat apa pun dan hanya menyembunyikan kesalahan pemanggilnya.",
+            0
+        )
+    end
     --[[
         The Bridge's gate-free seam. `Execute` skips every check, which is precisely why it is
         reached from here and nowhere else: by the time it is called, all of them have run.
