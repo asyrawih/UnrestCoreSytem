@@ -11,23 +11,54 @@
 Jadi dua hal. Implementasi jaringan harus bisa diganti, dan definisi paketnya harus milik
 pengguna, bukan milik framework.
 
-## 2. Satu temuan yang menentukan seluruh bentuk rancangan
+## 2. Koreksi terhadap draf pertama, dan jalur migrasi yang dibukanya
 
-Gerbang jaringan sekarang berbentuk **satu amplop generik**: satu RemoteEvent dan satu
-RemoteFunction, dengan nama perintah sebagai string dan payload sebagai `any`. Itu bekerja
-karena remote Roblox menerima nilai apa pun.
+Draf pertama dokumen ini menyatakan bahwa amplop generik **tidak mungkin** dibuat di atas
+ByteNet, karena buffer menuntut skema konkret dan tidak ada padanan untuk `any`. **Itu salah**,
+dan koreksinya membuat rencana ini jauh lebih baik.
 
-**ByteNet tidak bisa melakukan itu.** Dia menyerialisasi ke buffer, dan buffer menuntut skema
-konkret: `uint8`, `string`, `struct { ... }`. Tidak ada padanan untuk `any`. Artinya satu amplop
-generik **tidak mungkin dibuat di atas ByteNet**, dan bukan karena rancangannya kurang bagus,
-tapi karena itu memang harga dari serialisasi buffer.
+ByteNet-Max mengekspor tipe data `unknown`. Cara kerjanya bukan menyerialisasi nilainya, tapi
+menitipkannya: `write` mengalokasikan satu byte berisi indeks, lalu mendorong nilai aslinya ke
+tabel referensi yang ikut dikirim di luar buffer. Jadi amplop generik **bisa** dibuat, dan
+sudah saya uji type-check-nya bersih:
 
-Konsekuensinya: memakai ByteNet **memaksa satu paket per perintah**. Itu bukan kekurangan, itu
-justru sisi kuatnya, karena nama perintah tidak perlu ikut dikirim di kabel sama sekali. Tapi
-itu berarti rancangan pemisahannya harus mengakomodasi transport yang punya definisi per
-perintah, bukan sekadar transport yang mengirim tabel.
+```luau
+ByteNet.definePacket({
+    value = ByteNet.struct({ command = ByteNet.string, payload = ByteNet.unknown }),
+})
+```
 
-Seluruh rancangan di bawah ini turun dari satu kalimat itu.
+Tapi bacalah apa yang sebenarnya terjadi. Nilai yang lewat `unknown` **tidak dipadatkan sama
+sekali** — dia menumpang seperti argumen remote biasa. Artinya amplop generik memberi
+pengelompokan paket milik ByteNet, tapi melepaskan justru manfaat yang membuat orang memilih
+ByteNet. Dan karena `unknown` berarti tidak ada skema, `Validate.Payload` milik framework
+kembali menanggung seluruh beban pemeriksaan bentuk.
+
+Jadi kesimpulan draf pertama tetap berdiri, tapi dengan alasan yang benar: **satu paket per
+perintah adalah pilihan yang tepat, bukan keharusan.**
+
+Dan karena dia pilihan, ada jalur migrasi bertahap yang tidak terlihat di draf pertama:
+
+| Tahap | Bentuk | Kerja yang dibutuhkan |
+| --- | --- | --- |
+| 1 | Amplop generik memakai `ByteNet.unknown` | nol per perintah; transport langsung tukar |
+| 2 | Perintah yang paling sering dipanggil dikonversi ke paket bertipe | satu definisi per perintah, sesuai kebutuhan |
+| 3 | Sisanya menyusul, atau tidak sama sekali | perintah yang jarang tidak perlu dibayar |
+
+Ini jauh lebih baik daripada menuntut setiap paket didefinisikan di muka sebelum satu baris pun
+bisa dijalankan. Framework tidak perlu tahu tahap mana yang sedang dipakai: bagi dia keduanya
+sama-sama transport.
+
+**Satu peringatan tentang paketnya.** `bufferWriter.reference` di ByteNet-Max 1.0.0 berisi
+`print(references)` yang tertinggal, di `process/bufferWriter.luau:75`. Setiap penulisan
+`unknown` akan mencetak ke output window. Kalau Tahap 1 dipakai, itu satu baris cetak per
+permintaan. Perlu di-patch di sisi pengguna, atau dilaporkan ke hulu.
+
+**Satu catatan keamanan.** ByteNet juga mengekspor `inst` untuk mengirim referensi Instance.
+`Validate.Payload` milik framework menolak Instance di dalam payload, dan penolakan itu
+disengaja: Instance dalam payload adalah referensi hidup ke data model yang bisa ditulis
+handler. Kalau sebuah paket memakai `inst`, kebijakan framework akan tetap menolaknya, dan itu
+perilaku yang benar.
 
 ## 3. Tiga hal yang sekarang tercampur di `Net/`
 
