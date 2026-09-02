@@ -34,6 +34,7 @@
 ]]
 
 local RunService = game:GetService("RunService")
+local ServerScriptService = game:GetService("ServerScriptService")
 
 local Constants = require(script.Constants)
 local Transport = require(script.Net.Transport)
@@ -96,10 +97,25 @@ local Unrest = {
     Elements = elements,
 }
 
+--[[
+    The singleton's shape: `Types.Unrest` plus the one door that only exists here.
+
+    `OpenGateway` is not on `Types.Unrest` because that type is realm-neutral and the gateway
+    is not: it lives in ServerScriptService, and a client that could name it in a type could
+    not require it anyway. `Start` is restated ahead of the intersection so that the value
+    `:Start()` hands back is this shape rather than the narrower one.
+]]
+export type Singleton = {
+    Start: (self: Singleton) -> Singleton,
+    OpenGateway: (self: Singleton) -> (),
+} & Types.Unrest
+
 --- The one cast in the framework: the singleton is only complete once its methods exist.
-local singleton = (Unrest :: any) :: Types.Unrest
+local singleton = (Unrest :: any) :: Singleton
 
 local started = false
+--- The authoritative gateway, once `:OpenGateway()` has built it. Server-only, and nil until.
+local gateway: Types.NetServer? = nil
 
 --[[
     Installs the transport every command and channel travels on, replacing the default
@@ -109,7 +125,7 @@ local started = false
     framework's decisions: it hands the server gateway a raw request and the gateway answers.
     That direction is why installing one cannot widen what a client may ask for.
 ]]
-function Unrest:UseTransport(provider: Transport.TransportProvider): Types.Unrest
+function Unrest:UseTransport(provider: Transport.TransportProvider): Singleton
     if started then
         error(
             "[Unrest] :UseTransport must be called before :Start(). By now the gateway is running, "
@@ -121,7 +137,7 @@ function Unrest:UseTransport(provider: Transport.TransportProvider): Types.Unres
     return singleton
 end
 
-function Unrest:Start(): Types.Unrest
+function Unrest:Start(): Singleton
     if started then
         return singleton
     end
@@ -145,6 +161,47 @@ function Unrest:Start(): Types.Unrest
 
     core:Start(singleton)
     return singleton
+end
+
+--[[
+    Builds the authoritative gateway and opens it. Server-only, and the last line of a server
+    bootstrap rather than a step hidden inside `:Start()`.
+
+    WHY THE ORDER IS THE WHOLE POINT. The remotes do not exist until the gateway starts, so
+    until this call there is physically nothing for a client to send on. Opening it last means
+    the earliest request a client is able to make already has every handler registered and
+    waiting: `:Start()` has run every system's `Init` (which is where `Bridge:Handle` is
+    called) and then every `Start`. There is no window in which the door is open and the room
+    behind it is empty.
+
+    That property is only kept by calling this explicitly, which is why `:Start()` does not do
+    it. A bootstrap that registers a system after `:Start()` -- a plugin loaded at runtime, say
+    -- still gets to decide when the door opens, and can see that it decided.
+
+    The gateway is fetched rather than required at the top of this file on purpose: this module
+    is replicated, and `ServerScriptService.Unrest.Net.Server` is not. The policy is never
+    shipped to the machines it polices, so the require has to happen inside a server-only call.
+]]
+function Unrest:OpenGateway(): ()
+    if context ~= "Server" then
+        error(
+            "[Unrest] :OpenGateway() is server-only. The gateway is the authority a client is checked "
+                .. "against; it lives in ServerScriptService and no client can reach it. Call :Start() here "
+                .. "and leave the door to the server bootstrap.",
+            0
+        )
+    end
+    if gateway ~= nil then
+        error(
+            "[Unrest] :OpenGateway() was called twice. The second call would be a second gateway on the "
+                .. "same remotes, so this throws rather than guessing which one should answer.",
+            0
+        )
+    end
+
+    local built = require(ServerScriptService.Unrest.Net.Server).new(bridge)
+    gateway = built
+    built:Start()
 end
 
 function Unrest:Stop(): ()

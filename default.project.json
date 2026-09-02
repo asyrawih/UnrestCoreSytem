@@ -24,8 +24,12 @@
     "ServerScriptService": {
       "$className": "ServerScriptService",
 
-      "UnrestServer": {
+      "Unrest": {
         "$path": "src/server"
+      },
+
+      "Game": {
+        "$path": "src/game-server"
       }
     },
 
@@ -36,8 +40,8 @@
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
 
-        "UnrestClient": {
-          "$path": "src/client"
+        "Game": {
+          "$path": "src/game-client"
         }
       }
     }
