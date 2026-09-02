@@ -211,6 +211,12 @@ local Contracts = {
         or overwritten. Two declarations of one name means two people believe they own the
         policy for it, and silently keeping one of them is how a `Realm` or an `AllowClient`
         goes quietly missing.
+
+    `Wire` is the one field none of that applies to. It belongs to whichever transport a game
+    installed, it is kept exactly as written, and nothing here looks inside it -- there is no
+    shape it could be checked against without the framework knowing a networking library, which
+    is precisely what it must not know. The contract table is frozen whole, so `Wire` reaches
+    the transport as the same value the game wrote.
 ]]
 function Contracts:Declare(contract: CommandContract): CommandContract
     if typeof(contract) ~= "table" then
@@ -278,6 +284,9 @@ end
 
     Like `:Declare`, a repeat declaration is refused: a channel with two visibilities is a
     channel whose audience depends on load order.
+
+    `Wire` is copied across untouched, exactly as on a command: a channel's packet is the
+    transport's business and no concern of the registry's.
 ]]
 function Contracts:DeclareChannel(declaration: ChannelDeclaration): ChannelContract
     if typeof(declaration) ~= "table" then
@@ -304,6 +313,8 @@ function Contracts:DeclareChannel(declaration: ChannelDeclaration): ChannelContr
         Visibility = visibility,
         Value = declaration.Value,
         Description = declaration.Description,
+        -- Carried across verbatim, and unexamined for the same reason as on a command.
+        Wire = declaration.Wire,
     })
     CHANNELS[name] = contract
     return contract

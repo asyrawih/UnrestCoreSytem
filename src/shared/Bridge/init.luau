@@ -44,6 +44,12 @@
       * The server half lives in ServerScriptService, which ReplicatedStorage cannot reach --
         deliberately, so the policy is not replicated to the machines it polices. The server
         bootstrap constructs it and attaches it through `BridgeSeam.AttachGateway`.
+
+    THE TRANSPORT LIVES HERE TOO, for the same reason: this object owns the network seam, so
+    it is the one place both halves can read the same answer to "which transport". A game
+    installs one with `Unrest:UseTransport(...)`; the client half builds its side lazily and
+    the server gateway reads `:TransportProvider()` when it starts. One store means the two
+    halves cannot end up on different wires, which is the failure a second door would allow.
 ]]
 
 local Contracts = require(script.Parent.Net.Contracts)
@@ -51,6 +57,7 @@ local Maid = require(script.Parent.Util.Maid)
 local NetClient = require(script.Parent.Net.Client)
 local NetTypes = require(script.Parent.Net.Types)
 local Signal = require(script.Parent.Util.Signal)
+local Transport = require(script.Parent.Net.Transport)
 local Types = require(script.Parent.Types)
 local Validate = require(script.Parent.Net.Validate)
 
@@ -62,7 +69,7 @@ type Channel = {
 
 local Bridge = {}
 
-function Bridge.new(context: Types.RuntimeContext): Types.Bridge
+function Bridge.new(context: Types.RuntimeContext, provider: Transport.TransportProvider?): Types.Bridge
     if context ~= "Server" and context ~= "Client" then
         error(`[Unrest.Bridge] .new expects "Server" or "Client", got {tostring(context)}.`, 0)
     end
@@ -71,6 +78,9 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
     local handlers: { [string]: { Types.CommandHandler } } = {}
     local lifetime = Maid.new()
     local gateway: NetTypes.NetGateway? = nil
+    local transport: Transport.TransportProvider? = provider
+    --- The client half, built at the bottom of this constructor. Nil on the server.
+    local netClient: NetTypes.NetClient? = nil
     local destroyed = false
 
     local rejected: Types.Signal<Types.Rejection> = Signal.new("Bridge.Rejected")
@@ -419,6 +429,48 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
         gateway = installed
     end
 
+    --[[
+        Installs the transport both halves build from. `Unrest:UseTransport` is the door a
+        game uses; this is where the answer is kept.
+
+        Not on `NetTypes.BridgeSeam` for a mechanical reason worth stating so nobody "fixes"
+        it: the seam types live in `Net/Types`, `Net/Transport` requires `Net/Types`, and a
+        `Net/Types` that named a transport type would close that into a require cycle. The
+        server gateway reads these through a local structural type instead.
+    ]]
+    function bridge:UseTransport(provided: Transport.TransportProvider): ()
+        if typeof(provided) ~= "table" or typeof((provided :: any).Name) ~= "string" then
+            error("[Unrest.Bridge] :UseTransport expects a TransportProvider with a Name.", 0)
+        end
+        transport = provided
+
+        local half = netClient
+        if half ~= nil then
+            -- Throws if this client has already sent anything: half a transport is worse
+            -- than the wrong one, because only some of the traffic would move.
+            (half :: any):UseTransport(provided)
+        end
+    end
+
+    --- Whichever provider was installed, or nil to mean "the default". Read by the server
+    --- gateway when it starts, and by nothing else.
+    function bridge:TransportProvider(): Transport.TransportProvider?
+        return transport
+    end
+
+    --[[
+        Brings this realm's client half online. Called by `Unrest:Start()`, which is late
+        enough for a game to have installed a transport and early enough that the first click
+        on a button that was already on screen still lands. On the server this does nothing:
+        the server half is constructed by its own bootstrap.
+    ]]
+    function bridge:StartNetworking(): ()
+        local half = netClient
+        if half ~= nil then
+            half:Start()
+        end
+    end
+
     function bridge:Execute(command: string, source: Types.CommandSource, payload: any): Types.InvokeResult
         assertAlive("Execute")
         return execute(command, source, payload)
@@ -462,10 +514,18 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
         a context, so if the client half were attached from outside, every client bootstrap
         would have to remember to do it -- and forgetting would fail open, as a Dispatch that
         quietly does nothing. Building it here means the client is networked by construction.
+
+        What is NOT done here is `client:Start()`, and the omission is the whole reason a
+        transport can be chosen at all. This constructor runs while `ReplicatedStorage.Unrest`
+        is still being required, before a game has had the chance to say a word; starting the
+        client here would build the default transport in that window and leave
+        `Unrest:UseTransport` with nothing to install. So the object is attached now and its
+        transport is built at the first of `Unrest:Start()` or the first dispatch.
     ]]
     if context == "Client" then
         local seam = (bridge :: any) :: NetTypes.BridgeSeam
-        local client = NetClient.new(seam)
+        local client = NetClient.new(seam, transport)
+        netClient = client
 
         lifetime:Add(client)
         lifetime:Add(client.Refused:Connect(function(rejection: Types.Rejection)
@@ -474,7 +534,6 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
         end))
 
         seam:AttachGateway((client :: any) :: NetTypes.NetGateway)
-        client:Start()
     end
 
     return (bridge :: any) :: Types.Bridge

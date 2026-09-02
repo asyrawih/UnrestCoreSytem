@@ -111,6 +111,19 @@ export type CommandContract = {
     Response: boolean?,
     --- One line on what the command does, surfaced in error messages and docs.
     Description: string?,
+    --[[
+        THE TRANSPORT'S FIELD, AND THE FRAMEWORK NEVER READS IT.
+
+        Whatever the installed transport needs to put this command on its wire -- a ByteNet
+        packet, a codec, an id -- declared on the same line as the policy that governs it, so
+        a mismatch between the two is visible while reading rather than at runtime. The
+        framework carries it verbatim: `Declare` does not validate it, no gate consults it,
+        and the default remotes transport ignores it entirely.
+
+        It is `any` on purpose. Typing it would be the framework having an opinion about a
+        library it must never depend on.
+    ]]
+    Wire: any?,
 }
 
 --------------------------------------------------------------------------------
@@ -131,6 +144,8 @@ export type ChannelContract = {
     --- Schema the published value must satisfy before it is allowed to replicate.
     Value: ArgumentSpec?,
     Description: string?,
+    --- The transport's, exactly as on a command contract: carried, never read.
+    Wire: any?,
 }
 
 --[[
@@ -143,6 +158,7 @@ export type ChannelDeclaration = {
     Visibility: ChannelVisibility?,
     Value: ArgumentSpec?,
     Description: string?,
+    Wire: any?,
 }
 
 --[[

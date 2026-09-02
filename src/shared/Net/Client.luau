@@ -2,7 +2,8 @@
 --[[
     Unrest / Net / Client
 
-    The client half of the gateway.
+    The client half of the gateway: a contract guard and a call into the transport, and after
+    the transport was lifted out there is nothing else left in the file.
 
     ================================================================================
     THE CHECK IN THIS FILE IS A DEVELOPER CONVENIENCE. IT IS NOT A SECURITY CONTROL.
@@ -22,37 +23,40 @@
     does not know, ask, or care whether this file ran. If the two ever disagree, the server
     wins; if you ever have to delete one, delete this one.
 
+    Swapping the transport does not weaken this, because it was never load-bearing. Swapping
+    the transport cannot weaken the server gate either, because the gate reads the server's
+    contract table and not the message.
+
     The asymmetry in where the two halves live is deliberate. This half is in ReplicatedStorage
     because the Bridge must construct it on the client. The other half is in
     ServerScriptService, where a client never receives it.
+
+    WHEN THE TRANSPORT IS BUILT, and why not at require time. The Bridge builds this object
+    while `ReplicatedStorage.Unrest` is still being required, which is before a game has had a
+    chance to say which transport it wants. So construction is split: this object exists (and
+    is attached as the gateway) from require, and the transport underneath it is built at the
+    first of `Unrest:Start()` or the first dispatch. `UseTransport` refuses once that has
+    happened, loudly, rather than leaving two transports half-installed.
 ]]
 
-local Constants = require(script.Parent.Parent.Constants)
 local Contracts = require(script.Parent.Contracts)
 local Net = require(script.Parent)
 local NetTypes = require(script.Parent.Types)
 local Primitives = require(script.Parent.Parent.Primitives)
+local Remotes = require(script.Parent.Transports.Remotes)
 local Signal = require(script.Parent.Parent.Util.Signal)
+local Transport = require(script.Parent.Transport)
 
 type InvokeResult = NetTypes.InvokeResult
 type RejectionReason = NetTypes.RejectionReason
 type Signal<T...> = Primitives.Signal<T...>
 
---[[
-    Dispatches made before the server's remotes have replicated are queued, because a UI that
-    is already on screen should not silently lose the first click. The queue is bounded: a
-    client dispatching into a gateway that never appears must not grow a list forever, so the
-    oldest entry is dropped rather than the newest refused.
-]]
-local MAX_PENDING = 32
-
 local Client = {}
 
-function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
+function Client.new(bridge: NetTypes.BridgeSeam, provider: Transport.TransportProvider?): NetTypes.NetClient
     local refused: Signal<NetTypes.Rejection> = Signal.new("NetClient.Refused")
-    local connections: { RBXScriptConnection } = {}
-    local pending: { { Command: string, Payload: any } } = {}
-    local remotes: Net.Remotes? = nil
+    local installed: Transport.TransportProvider = provider or Remotes
+    local transport: Transport.ClientTransport? = nil
     local started = false
     local destroyed = false
 
@@ -117,56 +121,49 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
         return name, nil, nil
     end
 
-    local function flush(): ()
-        local ready = remotes
-        if ready == nil then
-            return
-        end
-
-        local queued = pending
-        pending = {}
-        for _, item in queued do
-            ready.Dispatch:FireServer(item.Command, item.Payload)
-        end
-    end
-
-    local function adopt(found: Net.Remotes): ()
-        remotes = found
-
-        table.insert(
-            connections,
-            found.Publish.OnClientEvent:Connect(function(channel: any, value: any)
-                --[[
-                    Server -> client channel replication, and the only traffic that flows this
-                    way. It is applied to the local Bridge without being re-published, so a
-                    replicated value can never bounce back across the wire.
-                ]]
-                if typeof(channel) ~= "string" then
-                    return
-                end
-                bridge:Receive(channel :: string, value)
-            end)
-        )
-
-        flush()
-    end
-
-    --- Yields only when the gateway has not replicated yet, and only for callers that are
-    --- allowed to yield.
-    local function resolveRemotes(): Net.Remotes?
-        local existing = remotes
-        if existing ~= nil then
+    --[[
+        Builds the transport from whichever provider is installed, once. The published channel
+        values it delivers are applied to the local Bridge without being re-published, so a
+        replicated value can never bounce back across the wire.
+    ]]
+    local function ensureTransport(): Transport.ClientTransport?
+        local existing = transport
+        if existing ~= nil or destroyed then
             return existing
         end
 
-        local found = Net.Await(Constants.Limits.InvokeTimeout)
-        if found == nil then
-            return nil
+        local build = installed.Client
+        if build == nil then
+            error(
+                `[Unrest.Net.Client] the "{installed.Name}" transport provides no Client half, `
+                    .. "so this client has no way to reach the server.",
+                0
+            )
         end
-        if remotes == nil then
-            adopt(found)
+
+        local built = build()
+        transport = built
+        built:OnPublish(function(channel: string, value: any)
+            bridge:Receive(channel, value)
+        end)
+        built:Start()
+        return built
+    end
+
+    --[[
+        Installs the transport a game chose. It must land before anything has been sent,
+        because the alternative -- quietly building the default and then swapping it out -- is
+        a window in which some traffic went one way and the rest went another.
+    ]]
+    function client:UseTransport(chosen: Transport.TransportProvider): ()
+        if transport ~= nil then
+            error(
+                `[Unrest.Net.Client] the "{installed.Name}" transport is already running; `
+                    .. "install a transport before Unrest:Start() and before the first dispatch.",
+                0
+            )
         end
-        return found
+        installed = chosen
     end
 
     --- Never yields: the Bridge builds this at require time, and blocking there would deadlock
@@ -176,27 +173,7 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
             return
         end
         started = true
-
-        local immediate = Net.Peek()
-        if immediate ~= nil then
-            adopt(immediate)
-            return
-        end
-
-        task.spawn(function()
-            local found = Net.Await()
-            if destroyed or remotes ~= nil then
-                return
-            end
-            if found == nil then
-                warn(
-                    `[Unrest.Net.Client] no gateway appeared under ReplicatedStorage.{Constants.Remotes.Folder}. `
-                        .. "Is the server bootstrap running?"
-                )
-                return
-            end
-            adopt(found)
-        end)
+        ensureTransport()
     end
 
     function client:Dispatch(command: string, payload: any): ()
@@ -210,18 +187,11 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
             return
         end
 
-        local ready = remotes
+        local ready = ensureTransport()
         if ready == nil then
-            if #pending >= MAX_PENDING then
-                table.remove(pending, 1)
-            end
-            table.insert(pending, { Command = name, Payload = payload })
             return
         end
-
-        -- The envelope: a name and a value. Nothing else fits, which is why nothing else can
-        -- be forged into it.
-        ready.Dispatch:FireServer(name, payload)
+        ready:Send(name, payload)
     end
 
     function client:Invoke(command: string, payload: any): InvokeResult
@@ -243,57 +213,18 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
             )
         end
 
-        -- Invoke is allowed to yield, so unlike Dispatch it can wait for the gateway rather
-        -- than queue behind it.
-        local ready = resolveRemotes()
+        local ready = ensureTransport()
         if ready == nil then
-            return refuse(name, "Timeout", "the remote gateway is not available")
+            return { Ok = false, Value = nil, Reason = "Timeout" }
         end
 
         --[[
-            `RemoteFunction:InvokeServer` has no timeout of its own: if the server is wedged,
-            this thread waits forever. So the call runs on a spawned thread and this one is
-            resumed by whichever finishes first, the response or the deadline.
+            How the round trip is built is the transport's business. The framework supplies
+            the deadline -- `Constants.Limits.InvokeTimeout`, which the transport is handed
+            through the same Constants table -- and treats an answer that never came as a
+            timeout, because it cannot tell a wedged server from a slow one and must not guess.
         ]]
-        local thread = coroutine.running()
-        local invoke = ready.Invoke
-        local settled = false
-
-        task.spawn(function()
-            local ok, result = pcall(function(): any
-                return invoke:InvokeServer(name, payload)
-            end)
-            if settled then
-                return
-            end
-            settled = true
-            task.spawn(thread, ok, result)
-        end)
-
-        task.delay(Constants.Limits.InvokeTimeout, function()
-            if settled then
-                return
-            end
-            settled = true
-            -- We stop waiting. We never retry: an automatic retry on a timeout is how a
-            -- struggling server gets a second copy of every request it is already late on.
-            task.spawn(thread, false, "timed out")
-        end)
-
-        local ok: any, result: any = coroutine.yield()
-        if not ok then
-            return { Ok = false, Value = nil, Reason = "Timeout" }
-        end
-        if typeof(result) ~= "table" then
-            return { Ok = false, Value = nil, Reason = "HandlerError" }
-        end
-
-        local envelope = result :: { Ok: any, Value: any, Reason: any }
-        return {
-            Ok = envelope.Ok == true,
-            Value = envelope.Value,
-            Reason = if typeof(envelope.Reason) == "string" then envelope.Reason :: RejectionReason else nil,
-        }
+        return ready:Request(name, payload)
     end
 
     --[[
@@ -314,12 +245,11 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
         end
         destroyed = true
 
-        for _, connection in connections do
-            connection:Disconnect()
+        local ready = transport
+        if ready ~= nil then
+            ready:Destroy()
         end
-        table.clear(connections)
-        table.clear(pending)
-        remotes = nil
+        transport = nil
         refused:Destroy()
     end
 

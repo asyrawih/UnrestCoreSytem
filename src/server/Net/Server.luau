@@ -48,13 +48,29 @@ local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
 local Net = require(ReplicatedStorage.Unrest.Net)
 local NetTypes = require(ReplicatedStorage.Unrest.Net.Types)
 local Primitives = require(ReplicatedStorage.Unrest.Primitives)
+local Remotes = require(ReplicatedStorage.Unrest.Net.Transports.Remotes)
 local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
+local Transport = require(ReplicatedStorage.Unrest.Net.Transport)
 local Types = require(ReplicatedStorage.Unrest.Types)
 local Validate = require(ReplicatedStorage.Unrest.Net.Validate)
 
 type InvokeResult = NetTypes.InvokeResult
 type RejectionReason = NetTypes.RejectionReason
 type Signal<T...> = Primitives.Signal<T...>
+
+--[[
+    The Bridge owns the network seam, so it is also where the composition root parks the
+    transport a game chose: `Unrest:UseTransport(...)` writes it there and both halves read it
+    back, which is why there is no second way to hand this gateway a different transport from
+    the one the client is using.
+
+    Declared locally rather than on `NetTypes.BridgeSeam` for a mechanical reason: the seam
+    types live in `Net/Types`, `Net/Transport` requires `Net/Types`, and a `Net/Types` that
+    named a transport type would close that require into a cycle.
+]]
+type TransportHost = {
+    TransportProvider: (self: TransportHost) -> Transport.TransportProvider?,
+}
 
 --[[
     A token bucket, one pair of numbers per player per command.
@@ -111,7 +127,7 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
 
     local state: { [Player]: PlayerState } = {}
     local connections: { RBXScriptConnection } = {}
-    local remotes: Net.Remotes? = nil
+    local transport: Transport.ServerTransport? = nil
     local started = false
     local destroyed = false
 
@@ -300,7 +316,7 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
     --- Catches a client up on retained `Public` channels. Retained means retained: a player who
     --- joins after the music started should still be told what is playing.
     local function replayPublic(player: Player): ()
-        local ready = remotes
+        local ready = transport
         if ready == nil then
             return
         end
@@ -308,7 +324,7 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
         for name, value in seam:Snapshot() do
             local contract = Contracts:GetChannel(name)
             if contract ~= nil and contract.Visibility == "Public" then
-                ready.Publish:FireClient(player, name, value)
+                ready:PublishTo(player, name, value)
             end
         end
     end
@@ -319,7 +335,7 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
         and a check that cheap belongs on the last line of defence too.
     ]]
     function server:Publish(channel: string, value: any, target: Player?): ()
-        local ready = remotes
+        local ready = transport
         if ready == nil or destroyed then
             return
         end
@@ -335,11 +351,11 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
             if target == nil then
                 return
             end
-            ready.Publish:FireClient(target, channel, value)
+            ready:PublishTo(target, channel, value)
             return
         end
 
-        ready.Publish:FireAllClients(channel, value)
+        ready:PublishAll(channel, value)
     end
 
     function server:Start(): ()
@@ -349,31 +365,53 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
         started = true
 
         --[[
-            The remotes are created here, at the end of the server's boot, and this is the
-            reason `Start` is the last line of the bootstrap: the gateway becomes reachable
-            only once every handler is registered, so the very first request a client can
-            physically make already has somewhere to land.
+            The transport is built and started here, at the end of the server's boot, and this
+            is the reason `Start` is the last line of the bootstrap: the gateway becomes
+            reachable only once every handler is registered, so the very first request a client
+            can physically make already has somewhere to land.
+
+            `handle` is registered BEFORE the transport starts, so there is no instant in which
+            a request could arrive with nothing to refuse it.
         ]]
-        local created = Net.Create()
-        remotes = created
+        local host = (bridge :: any) :: TransportHost
+        local provider = host:TransportProvider() or Remotes
+        local build = provider.Server
+        if build == nil then
+            error(
+                `[Unrest.Net.Server] the "{provider.Name}" transport provides no Server half, `
+                    .. "so no request could ever reach this gateway.",
+                0
+            )
+        end
+
+        local built = build()
+        transport = built
 
         seam:AttachGateway((server :: any) :: NetTypes.NetGateway)
 
-        table.insert(
-            connections,
-            created.Dispatch.OnServerEvent:Connect(function(player: Player, command: any, payload: any)
-                handle(player, command, payload, false)
-            end)
-        )
+        --[[
+            THE DIRECTION OF CONTROL, and the reason the transport was split out at all.
+
+            The transport hands `handle` a raw request -- who sent it, what they called it,
+            what they sent -- and `handle` answers. It never runs a handler, never reads a
+            contract, and never learns whether the request was allowed. The worst a transport
+            can do is deliver rubbish, which is refused exactly as rubbish from anywhere else
+            is refused, and counted against the same player.
+        ]]
+        built:OnRequest(handle)
 
         --[[
-            Client -> server only. `created.Invoke.OnServerInvoke` is assigned; `InvokeClient`
-            is never called anywhere in this framework, because a client that never returns
-            would hang the server thread that called it, with no timeout available to break it.
+            A transport may drop a message before this gateway ever sees it -- a buffer that
+            will not deserialise, an envelope shaped wrongly for its wire. It is allowed to
+            drop; it is not allowed to decide what the drop means. Reporting it here puts it
+            through the same refusal path, and therefore the same abuse counter, as anything
+            the gate refused itself.
         ]]
-        created.Invoke.OnServerInvoke = function(player: Player, command: any, payload: any): InvokeResult
-            return handle(player, command, payload, true)
-        end
+        built:OnRefusal(function(player: Player?, command: string?, reason: RejectionReason, detail: string)
+            refuse(player, command or "<malformed>", reason, detail, true)
+        end)
+
+        built:Start()
 
         table.insert(
             connections,
@@ -412,11 +450,11 @@ function Server.new(bridge: Types.Bridge): NetTypes.NetServer
         table.clear(connections)
         table.clear(state)
 
-        local ready = remotes
+        local ready = transport
         if ready ~= nil then
-            ready.Invoke.OnServerInvoke = nil :: any
+            ready:Destroy()
         end
-        remotes = nil
+        transport = nil
 
         seam:AttachGateway(nil)
         rejectedSignal:Destroy()

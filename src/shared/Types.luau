@@ -26,6 +26,7 @@
 local AdapterTypes = require(script.Parent.Adapters.Types)
 local NetTypes = require(script.Parent.Net.Types)
 local Primitives = require(script.Parent.Primitives)
+local Transport = require(script.Parent.Net.Transport)
 
 --------------------------------------------------------------------------------
 -- Re-exports
@@ -69,6 +70,15 @@ export type Rejection = NetTypes.Rejection
 export type InvokeResult = NetTypes.InvokeResult
 export type NetServer = NetTypes.NetServer
 export type NetClient = NetTypes.NetClient
+
+--- The replaceable half of the net layer. A game implements these to put the framework on a
+--- wire of its own; the framework implements the default over Roblox remotes.
+export type ServerTransport = Transport.ServerTransport
+export type ClientTransport = Transport.ClientTransport
+export type TransportProvider = Transport.TransportProvider
+export type RequestHandler = Transport.RequestHandler
+export type PublishHandler = Transport.PublishHandler
+export type RefusalReporter = Transport.RefusalReporter
 
 --------------------------------------------------------------------------------
 -- Core: systems and registry
@@ -168,6 +178,13 @@ export type Unrest = {
 
     Start: (self: Unrest) -> Unrest,
     Stop: (self: Unrest) -> (),
+    --[[
+        Replaces the default remotes transport, for every command and every channel. Must be
+        called between `require` and `:Start()`: the client half is attached at require time
+        but does not build its transport until the first of `:Start()` or the first dispatch,
+        and installing one after that throws rather than splitting the traffic in two.
+    ]]
+    UseTransport: (self: Unrest, provider: TransportProvider) -> Unrest,
     IsStarted: (self: Unrest) -> boolean,
 
     Register: (self: Unrest, definition: System) -> System,
