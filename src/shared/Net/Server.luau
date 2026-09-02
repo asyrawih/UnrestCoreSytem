@@ -5,10 +5,16 @@
     The authoritative gateway. Everything a client can reach passes through `handle` below,
     and nothing reaches a handler by any other route.
 
-    THIS FILE IS IN ServerScriptService, NOT ReplicatedStorage, and that is a security
-    property rather than a filing convention: the policy is never replicated to the machines
-    it polices. The contract *table* is replicated -- it is public knowledge, a list of door
-    names -- but the code that enforces it is not.
+    THIS FILE IS READABLE BY A CLIENT, and that is fine. It used to live in
+    ServerScriptService with a comment claiming the policy is never replicated to the machines
+    it polices. That claim was false: the rate limits are in `Constants` and the `Authorize`
+    predicates are in the game's contracts, and both of those are replicated on purpose,
+    because contracts are public knowledge -- a list of door names.
+
+    What makes this the authority is not that it is hidden. It is that only the server ever
+    runs it, which `Server.new` enforces directly, and that a client has no way to make the
+    server skip it. A reader who wants to know why a request was refused is welcome to read
+    the order below.
 
     A REQUEST IS REFUSED IN THIS ORDER. Cheapest and most decisive first, so a flood is
     turned away before it costs anything:

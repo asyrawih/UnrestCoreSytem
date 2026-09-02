@@ -39,11 +39,12 @@
 
     THE GATEWAYS, and why the two halves are attached differently:
 
-      * The client half (`Net/Client.luau`) lives in ReplicatedStorage, so the Bridge simply
-        builds it in the constructor.
-      * The server half lives in ServerScriptService, which ReplicatedStorage cannot reach --
-        deliberately, so the policy is not replicated to the machines it polices. The server
-        bootstrap constructs it and attaches it through `BridgeSeam.AttachGateway`.
+      * The client half (`Net/Client.luau`) is built in the constructor, because every client
+        needs one and nothing has to be decided first.
+      * The server half is built on demand by `Unrest:OpenGateway()` and attached through
+        `BridgeSeam.AttachGateway`. Not because it is unreachable from here -- both halves sit
+        in ReplicatedStorage -- but because opening it is a decision with an order to it: the
+        remotes appear at that moment, so it happens after every handler is registered.
 
     THE TRANSPORT LIVES HERE TOO, for the same reason: this object owns the network seam, so
     it is the one place both halves can read the same answer to "which transport". A game

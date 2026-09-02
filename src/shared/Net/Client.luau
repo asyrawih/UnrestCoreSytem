@@ -27,9 +27,9 @@
     the transport cannot weaken the server gate either, because the gate reads the server's
     contract table and not the message.
 
-    The asymmetry in where the two halves live is deliberate. This half is in ReplicatedStorage
-    because the Bridge must construct it on the client. The other half is in
-    ServerScriptService, where a client never receives it.
+    Both halves live in ReplicatedStorage. The server half is not hidden from a client and does
+    not need to be: it refuses to be built anywhere but the server, and reading it tells a
+    client only what the contracts already say out loud.
 
     WHEN THE TRANSPORT IS BUILT, and why not at require time. The Bridge builds this object
     while `ReplicatedStorage.Unrest` is still being required, which is before a game has had a
