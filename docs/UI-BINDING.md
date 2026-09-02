@@ -314,26 +314,202 @@ per-command budget the server applies on arrival.
 
 ## 3. The handler vocabulary
 
-Handlers are the same eight verbs whatever the class underneath is, plus two that describe
-the query rather than the element.
+Handlers are the same ten verbs whatever the class underneath is, plus two that describe the
+query rather than the element. Every handler is called as `(element, value)`, and `value` is
+nil for all but two of them — a one-parameter `function(element) end` is the normal shape.
 
-| Handler | Signature | Fires on |
-| --- | --- | --- |
-| `Active` | `(element, nil)` | primary activation — `Activated`, `MouseClick`, `Triggered` |
-| `Secondary` | `(element, nil)` | `MouseButton2Click`, `RightMouseClick` |
-| `Press` | `(element, nil)` | pointer down (`InputBegan`, filtered to MouseButton1 / Touch) |
-| `Release` | `(element, nil)` | pointer up (`InputEnded`, same filter) |
-| `Hover` | `(element, nil)` | `MouseEnter`, `MouseHoverEnter`, `PromptShown` |
-| `Unhover` | `(element, nil)` | `MouseLeave`, `MouseHoverLeave`, `PromptHidden` |
-| `Focus` | `(element, nil)` | `TextBox.Focused` |
-| `Blur` | `(element, nil)` | `TextBox.FocusLost` |
-| `Submit` | `(element, text)` | `TextBox.FocusLost` **with Enter pressed** — clicking away is not a commit |
-| `Changed` | `(element, value)` | the adapter's `ValueProperty` changed |
-| `Added` | `(element, nil)` | the element started matching the descriptor |
-| `Removed` | `(element, nil)` | it stopped matching — untagged, renamed, reparented, or destroyed |
+### Where each handler comes from
 
-`Added` and `Removed` are supported by *every* element, including the ones that support
-nothing else: they describe the query's lifecycle, not the instance's.
+Adapters compose along the class hierarchy, so a handler declared on `GuiObject` belongs to
+**every** GuiObject, and one declared on `GuiButton` belongs to both button classes. A handler
+appearing on more than one row is a *different Roblox event per family*, deliberately given
+one name so a single query can select "everything activatable in this room".
+
+| Handler | Declared on | Roblox event | Reaches | `value` |
+| --- | --- | --- | --- | --- |
+| `Active` | `GuiButton` | `Activated` | `TextButton`, `ImageButton` | nil |
+| `Active` | `ClickDetector` | `MouseClick` | `ClickDetector` | nil — the Player is dropped |
+| `Active` | `ProximityPrompt` | `Triggered` | `ProximityPrompt` | nil — the Player is dropped |
+| `Secondary` | `GuiButton` | `MouseButton2Click` | `TextButton`, `ImageButton` | nil |
+| `Secondary` | `ClickDetector` | `RightMouseClick` | `ClickDetector` | nil |
+| `Press` | `GuiObject` | `InputBegan`, filtered to MouseButton1 / Touch | every GuiObject | nil |
+| `Press` | `ProximityPrompt` | `PromptButtonHoldBegan` | `ProximityPrompt` | nil |
+| `Release` | `GuiObject` | `InputEnded`, same filter | every GuiObject | nil |
+| `Release` | `ProximityPrompt` | `PromptButtonHoldEnded` | `ProximityPrompt` | nil |
+| `Hover` | `GuiObject` | `MouseEnter` | every GuiObject | nil |
+| `Hover` | `ClickDetector` | `MouseHoverEnter` | `ClickDetector` | nil — the Player is dropped |
+| `Hover` | `ProximityPrompt` | `PromptShown` | `ProximityPrompt` | nil — the input type is dropped |
+| `Unhover` | `GuiObject` | `MouseLeave` | every GuiObject | nil |
+| `Unhover` | `ClickDetector` | `MouseHoverLeave` | `ClickDetector` | nil |
+| `Unhover` | `ProximityPrompt` | `PromptHidden` | `ProximityPrompt` | nil |
+| `Focus` | `TextBox` | `Focused` | `TextBox` only | nil |
+| `Blur` | `TextBox` | `FocusLost` | `TextBox` only | nil |
+| `Submit` | `TextBox` | `FocusLost` **with Enter pressed** | `TextBox` only | the committed `Text`, a string |
+| `Changed` | *synthesised from `ValueProperty`* | `GetPropertyChangedSignal(ValueProperty)` | every class with a `ValueProperty` | that property's current value |
+| `Added` | *query lifecycle* | — | every instance, adapter or not | nil |
+| `Removed` | *query lifecycle* | — | every instance, adapter or not | nil |
+
+Whatever argument the Roblox event carried is **not** forwarded unless the table above says
+so. A `ClickDetector.MouseClick` is handed a Player and a `ProximityPrompt.PromptShown` an
+input type; the adapters drop both, because adoption is client-only and the player would
+always be this one.
+
+### The same table, by class
+
+`Added` and `Removed` are omitted because every row has them — including a Folder or a Part
+with no adapter at all, which is why a query carrying only those two can select anything.
+
+| Class | Handlers |
+| --- | --- |
+| `Frame`, `ViewportFrame` | `Hover`, `Unhover`, `Press`, `Release` |
+| `TextLabel`, `ImageLabel`, `ScrollingFrame`, `CanvasGroup`, `VideoFrame` | those four, plus `Changed` |
+| `TextButton`, `ImageButton` | those four, plus `Active`, `Secondary`, `Changed` |
+| `TextBox` | those four, plus `Focus`, `Blur`, `Submit`, `Changed` |
+| `ScreenGui`, `SurfaceGui`, `BillboardGui` | `Changed` *(Enabled)* only — a LayerCollector is not a GuiObject |
+| `UICorner`, `UIScale` | `Changed` only |
+| every other `UI*` | none |
+| `ClickDetector` | `Active`, `Secondary`, `Hover`, `Unhover` — **no** `Press` / `Release`, **no** `Changed` |
+| `ProximityPrompt` | `Active`, `Hover`, `Unhover`, `Press`, `Release` — **no** `Secondary`, **no** `Changed` |
+
+### Code raises; attributes warn
+
+Binding a handler an element cannot support is never a silent no-op, but the severity depends
+on who asked. `Unrest:Query(…, { Submit = … })` against a Frame **throws**; the same mistake
+expressed in Studio **warns**, names the element and the fix, and leaves the screen up. Both
+go through `Adapters.bind` and print the same sentence — see §8.
+
+Note which side you are on: **exactly one handler is reachable from an attribute at all.**
+`UnrestCommand` wires `Active`, and there is no `UnrestHover` or `UnrestSubmit`. So the warn
+path only ever covers `UnrestCommand` on a class that cannot be activated; every other name in
+this section is code-only and therefore always raises.
+
+### The traps
+
+These are the parts that cost an afternoon if nobody wrote them down.
+
+#### `Press` fires, `Release` may never fire
+
+Both are `GuiObject.InputBegan` / `InputEnded`, and **`InputEnded` only fires while the
+pointer is still over that instance.** Press a button, drag off it, release: `Press` fired and
+`Release` never will. Anything built as a drag on top of this pair — a slider, a
+hold-to-charge action, a "pressed" tint — ends up with a state stuck until the next `Press`.
+
+The adapter will not fix this for you, on purpose: papering over it means connecting
+`UserInputService` on the element's behalf, and a global input listener is not something a tag
+should silently buy you.
+
+The same shape of failure has three more causes, so treat them as one rule rather than four:
+
+| Cause | What is lost |
+| --- | --- |
+| pointer leaves the element while held | `Release` |
+| a channel writes `Visible = false` on a hovered or held element | `Unhover`, `Release` |
+| the element is released mid-gesture — untagged, `UnrestIgnore` ticked, reparented out | every handler at once; the connections are torn down where they stand |
+| the element is destroyed mid-gesture | same |
+
+> **Never store "is pressed" or "is hovered" as state that a later event has to clear.** Drive
+> the visual from the enter event alone, or reset it in `Removed` — which is the one departure
+> the framework does guarantee, exactly once, for every one of those causes.
+
+#### `Focus`/`Blur` and `Press`/`Release` are not the only asymmetric pair
+
+`Hover`/`Unhover` on a `GuiObject` is `MouseEnter`/`MouseLeave`, which is **mouse-only**: it
+never fires on a touch device, so a hover-only affordance is invisible on mobile. It also does
+not fire when the element moves or disappears out from under a stationary cursor.
+
+`Hover` on a `ProximityPrompt` is not a pointer event at all. `PromptShown` fires when the
+prompt becomes visible — proximity and line of sight — and re-fires every time the player
+walks back into range. If you want "is being pointed at", `Hover` means that on a GuiObject
+and on a ClickDetector, and something else entirely on a prompt.
+
+#### `Press` on a `ProximityPrompt` is silent by default
+
+`PromptButtonHoldBegan` / `PromptButtonHoldEnded` only exist when `HoldDuration > 0`. With the
+default of zero, `Press` and `Release` bind successfully and then never fire once, while
+`Active` fires normally. `HoldDuration` is a bindable property, so a channel can switch that
+pair on and off from the server without anything rebinding.
+
+#### `Changed` is synthesised, and a class either has a value or it does not
+
+`Changed` is not written by hand in any adapter. The registry manufactures it from the
+adapter's `ValueProperty`, so a class has `Changed` exactly when it has one obvious value:
+
+| Has a `ValueProperty`, so has `Changed` | The property |
+| --- | --- |
+| `TextLabel`, `TextButton`, `TextBox` | `Text` |
+| `ImageLabel`, `ImageButton` | `Image` |
+| `ScrollingFrame` | `CanvasPosition` |
+| `CanvasGroup` | `GroupTransparency` |
+| `VideoFrame` | `Video` |
+| `LayerCollector` — so `ScreenGui`, `SurfaceGui`, `BillboardGui` | `Enabled` |
+| `UICorner` | `CornerRadius` |
+| `UIScale` | `Scale` |
+
+Everything else refuses `Changed` loudly, and the refusals are the deliberate part: `Frame`
+and `ViewportFrame` have no one value, `UIListLayout` has nine and picking one would be a coin
+flip dressed as an event, and `ClickDetector` / `ProximityPrompt` have none at all.
+`ValueProperty` flattens down the `Extends` chain like everything else and **cannot be
+un-declared**, which is why `ScreenGui` reports `Enabled` without saying so itself.
+
+Three more things about the value it reports:
+
+* It is the property's **current** value, read back when the signal fires, because
+  `GetPropertyChangedSignal` carries no payload. Two writes in the same frame can report the
+  later value twice, and there is never a previous value to compare against.
+* It fires for writes **the framework itself makes**. `UnrestBind` defaults to the very
+  property `Changed` watches, so an element that both follows a channel and handles `Changed`
+  hears its own repaint — and a `Changed` that dispatches back into that channel is a loop.
+* On a `TextBox` it fires per keystroke. That is what `Submit` exists to avoid.
+
+#### `Active` means two unrelated things
+
+It is a **handler** name on `GuiButton` (`Events.Active`) and a **bindable property** name on
+`GuiBase2d` (`Bindable.Active`). So:
+
+```luau
+adapters:Supports(label, "Active")   --> false — a TextLabel cannot be activated
+adapters:CanBind(label, "Active")    --> true  — but its Active property may be written
+```
+
+Two questions, one string, opposite answers. This is also why a `Describe` message can list
+`Active` under *bindable properties* for an element that does not support the `Active`
+*handler*, which reads like a contradiction and is not.
+
+The two also interact. `Activated` does not fire while the `Active` property is false, so a
+channel bound to `Active` can silence the `Active` handler — with `Press` and `Release` still
+firing, since those are `InputBegan`/`InputEnded` and do not consult it. `Modal` on another
+button does the same thing, from a different instance entirely.
+
+#### `Submit` and `Blur` fire in an undefined order
+
+Every commit is also a blur: pressing Enter fires both, from two separate connections to the
+same `FocusLost`. The connections are made while iterating a hash table, so their relative
+order is not defined and neither handler may assume the other has run. Use `Blur` for "no
+longer being edited" and `Submit` for the value. Clicking away and pressing Escape both fire
+`Blur` alone — neither is a commit.
+
+#### `Added` fires during `Query`, but never during `Bind`
+
+`Added` fires for elements that **already match** when the query is created — synchronously,
+inside the `Unrest:Query` call, before the handle is returned:
+
+```luau
+local handle
+handle = unrest:Query({ Tag = "Unrest" }, {
+    Added = function(element)
+        print(handle)   --> nil, for every element that already existed
+    end,
+})
+```
+
+`QueryHandle:Bind` is the asymmetry to watch. Merging an `Added` in later rebinds every
+element's connections but fires `Added` for **none** of them, because they had already
+arrived. If you need it for the existing set, pass it in the initial `Query` call.
+
+`Removed`, by contrast, fires exactly once per departure — including once for every current
+element when the query is `:Destroy()`ed. It runs *after* the element's event connections are
+torn down, so the element is already inert by then; when the cause was `Destroying`, the
+instance is on its way out, so do the cleanup there and then rather than deferring it.
 
 ---
 
