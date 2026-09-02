@@ -1,21 +1,28 @@
 --!strict
 --[[
-    Unrest / Core / Systems / MusicSystem
+    Unrest / Server / Systems / MusicSystem
 
     Owns the soundtrack: a named track table, the one Sound instance that plays it, and the
-    volume. It publishes what is playing on a Bridge channel and accepts play/stop commands
-    from the Bridge, so no UI code ever holds a reference to this table.
+    master volume.
 
-    (The Sound instance is the one place a Core system creates an Instance -- SoundService is
-    state, not view. It is never parented into any GUI and is never handed out.)
+    THIS SYSTEM IS SERVER-AUTHORITATIVE. It lives in ServerScriptService and no client holds a
+    reference to it. A player asks for a track by dispatching `Music.Play`, which crosses the
+    gateway, is checked against its contract, and only then reaches the handler below. What
+    the handler receives has already been proven to be a bounded identifier string; what it
+    decides is broadcast back on the `Music.NowPlaying` channel. UI reads the channel and never
+    the system.
+
+    (The Sound instance is the one place a system creates an Instance -- SoundService is state,
+    not view. It is never parented into a GUI and never handed out.)
 ]]
 
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 
-local Constants = require(script.Parent.Parent.Parent.Constants)
-local Types = require(script.Parent.Parent.Parent.Types)
-local Maid = require(script.Parent.Parent.Parent.Bridge.Maid)
-local Signal = require(script.Parent.Parent.Parent.Bridge.Signal)
+local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Maid = require(ReplicatedStorage.Unrest.Util.Maid)
+local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
+local Types = require(ReplicatedStorage.Unrest.Types)
 
 local DEFAULT_TRACKS: { Types.Track } = {
     { Name = "Lobby", SoundId = "rbxassetid://1837879082", Volume = 0.35, Looped = true },
@@ -24,6 +31,7 @@ local DEFAULT_TRACKS: { Types.Track } = {
 
 local MusicSystem = {
     Name = "MusicSystem",
+    Dependencies = {} :: { string },
 
     NowPlayingChanged = (Signal.new("MusicSystem.NowPlayingChanged") :: any) :: Types.Signal<string?>,
 
@@ -44,7 +52,7 @@ local function trackNames(self: typeof(MusicSystem)): string
 end
 
 --- Lazily creates (or replaces, if something destroyed it) the single playback Sound.
-function MusicSystem:_ensureSound(): Sound
+local function ensureSound(self: typeof(MusicSystem)): Sound
     local existing = self._sound
     if existing ~= nil and existing.Parent ~= nil then
         return existing
@@ -85,11 +93,17 @@ end
 function MusicSystem:Play(name: string): boolean
     local track = self._tracks[name]
     if track == nil then
+        --[[
+            An unknown track is a normal outcome, not an attack: the payload was a valid
+            identifier, it simply names nothing. The caller gets `false`, and the reason stays
+            in the server log -- a client must not be able to enumerate the track table by
+            watching which names come back differently.
+        ]]
         warn(`[Unrest.MusicSystem] no track named "{name}". Known tracks: {trackNames(self)}.`)
         return false
     end
 
-    local sound = self:_ensureSound()
+    local sound = ensureSound(self)
     sound.SoundId = track.SoundId
     sound.Looped = if track.Looped == nil then true else track.Looped
     sound.Volume = (track.Volume or 1) * self._volume
@@ -97,11 +111,7 @@ function MusicSystem:Play(name: string): boolean
 
     self._current = name
     self.NowPlayingChanged:Fire(name)
-
-    local bridge = self._bridge
-    if bridge ~= nil then
-        bridge:Publish(Constants.Channels.NowPlaying, name)
-    end
+    self:_publish()
 
     return true
 end
@@ -118,11 +128,7 @@ function MusicSystem:Stop(): ()
 
     self._current = nil
     self.NowPlayingChanged:Fire(nil)
-
-    local bridge = self._bridge
-    if bridge ~= nil then
-        bridge:Publish(Constants.Channels.NowPlaying, nil)
-    end
+    self:_publish()
 end
 
 --- Master volume in [0, 1]; per-track Volume is multiplied against it.
@@ -140,39 +146,65 @@ function MusicSystem:SetVolume(volume: number): ()
         sound.Volume = (if track ~= nil then track.Volume or 1 else 1) * self._volume
     end
 
+    self:_publish()
+end
+
+--- Both music channels are `Public`: what is playing is shared by definition, so it is the
+--- one place in this framework where a broadcast is the correct visibility.
+function MusicSystem:_publish(): ()
     local bridge = self._bridge
-    if bridge ~= nil then
-        bridge:Publish(Constants.Channels.MusicVolume, self._volume)
+    if bridge == nil then
+        return
     end
+    bridge:Publish(Constants.Channels.NowPlaying, self._current)
+    bridge:Publish(Constants.Channels.MusicVolume, self._volume)
 end
 
 function MusicSystem:Init(unrest: Types.Unrest): ()
-    self._bridge = unrest.Bridge
+    local bridge = unrest.Bridge
+    self._bridge = bridge
 
     for _, track in DEFAULT_TRACKS do
         self:AddTrack(track)
     end
 
-    self._maid:Add(unrest.Bridge:OnCommand(Constants.Commands.MusicPlay, function(payload: any)
-        if typeof(payload) == "string" then
-            self:Play(payload)
-        end
+    --[[
+        Handlers, not method calls. Every one of these is reached only through the Bridge, so
+        the same registration serves a local server dispatch and a remote request from a
+        client -- and the remote one has already been through the gate by the time it lands.
+
+        `payload` needs no defensive type check: the contract declares an identifier string and
+        the gateway validated it. That is the whole point of putting the schema in the contract.
+    ]]
+    self._maid:Add(
+        bridge:Handle(Constants.Commands.MusicPlay, function(_source: Types.CommandSource, payload: any): boolean
+            return self:Play(payload :: string)
+        end)
+    )
+
+    self._maid:Add(bridge:Handle(Constants.Commands.MusicStop, function(): ()
+        self:Stop()
     end))
-    self._maid:Add(unrest.Bridge:OnCommand(Constants.Commands.MusicStop, function()
+
+    self._maid:Add(
+        bridge:Handle(Constants.Commands.MusicSetVolume, function(_source: Types.CommandSource, payload: any): ()
+            self:SetVolume(payload :: number)
+        end)
+    )
+
+    --[[
+        A server-only command, and it is registered exactly like the others. Nothing about this
+        handler is defensive, because nothing about it needs to be: no client can reach it, and
+        the reason is one missing `AllowClient` line in the contract table.
+    ]]
+    self._maid:Add(bridge:Handle(Constants.Commands.MusicForceStopAll, function(): ()
         self:Stop()
     end))
 end
 
 function MusicSystem:Start(): ()
-    -- Publish the initial state so any UI that mounts later renders correctly straight away.
-    local bridge = self._bridge
-    if bridge ~= nil then
-        bridge:Publish(Constants.Channels.NowPlaying, self._current)
-        bridge:Publish(Constants.Channels.MusicVolume, self._volume)
-    end
-end
-
-function MusicSystem:Stop_(): ()
+    -- Publish the initial state so a client that joins later renders correctly straight away.
+    self:_publish()
 end
 
 function MusicSystem:Destroy(): ()

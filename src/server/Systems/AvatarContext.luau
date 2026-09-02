@@ -1,48 +1,57 @@
 --!strict
 --[[
-    Unrest / Core / Systems / AvatarContext
+    Unrest / Server / Systems / AvatarContext
 
-    Answers "who is here and what body are they wearing right now?" so that no other system
-    has to write character-loading boilerplate again.
+    Answers "who is here and what body are they wearing right now?" so no other system has to
+    write character-loading boilerplate again.
 
-    Context aware: on the client `player` defaults to `Players.LocalPlayer`, on the server it
-    is required. Reading a character is always a question, never a wait -- `GetCharacter`
-    returns nil rather than yielding, and `CharacterAdded` is there for code that wants to
-    react instead of poll.
+    SERVER-SIDE, AND THE CHARACTER MODEL STAYS HERE. `GetCharacter` hands back a live Instance,
+    which is exactly what a server system wants and exactly what must never cross the wire: a
+    replicated Instance reference is a handle into the data model, and handles are not data.
+
+    So the `Avatar.Character` channel carries the character's NAME, not the character, and it
+    is a `Player`-visibility channel -- addressed to its owner rather than broadcast. The
+    schema is what enforces the first half of that: a Model is an Instance, an Instance is not
+    plain data, and `Net/Validate.luau` refuses it. Flipping this channel's visibility by
+    accident would produce a refusal in the log, not a leak.
+
+    A client that wants the local character does not need a mirror of this system: it already
+    has `Players.LocalPlayer.Character`, replicated by Roblox, authoritative, and free.
+
+    Reading a character is always a question, never a wait -- `GetCharacter` returns nil rather
+    than yielding, and `CharacterAdded` is there for code that wants to react instead of poll.
 ]]
 
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Constants = require(script.Parent.Parent.Parent.Constants)
-local Types = require(script.Parent.Parent.Parent.Types)
-local Maid = require(script.Parent.Parent.Parent.Bridge.Maid)
-local Signal = require(script.Parent.Parent.Parent.Bridge.Signal)
+local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Maid = require(ReplicatedStorage.Unrest.Util.Maid)
+local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
+local Types = require(ReplicatedStorage.Unrest.Types)
 
 local AvatarContext = {
     Name = "AvatarContext",
+    Dependencies = {} :: { string },
 
     CharacterAdded = (Signal.new("AvatarContext.CharacterAdded") :: any) :: Types.Signal<Player, Model>,
     CharacterRemoving = (Signal.new("AvatarContext.CharacterRemoving") :: any) :: Types.Signal<Player, Model>,
 
     _characters = {} :: { [Player]: Model },
     _bridge = nil :: Types.Bridge?,
-    _isClient = RunService:IsClient(),
     _maid = Maid.new(),
 }
 
 --[[
-    Fills in the implied player. Returning nil (rather than throwing) keeps callers on the
-    server honest: they must pass a player, and they get a clear nil instead of LocalPlayer.
+    On the server there is no implied player, so this returns whatever it was given -- nil
+    included. Returning nil rather than throwing keeps callers honest: a system that forgot to
+    thread the player through gets a clear no-op instead of silently acting on somebody.
+
+    The player a request is about always arrives as `CommandSource.Player`, which the gateway
+    read off the transport. It is never a payload field.
 ]]
 function AvatarContext:Resolve(player: Player?): Player?
-    if player ~= nil then
-        return player
-    end
-    if self._isClient then
-        return Players.LocalPlayer
-    end
-    return nil
+    return player
 end
 
 function AvatarContext:GetCharacter(player: Player?): Model?
@@ -51,8 +60,8 @@ function AvatarContext:GetCharacter(player: Player?): Model?
         return nil
     end
 
-    -- The cache is authoritative, but fall back to the live property in case a character
-    -- was assigned before this system started.
+    -- The cache is authoritative, but fall back to the live property in case a character was
+    -- assigned before this system started.
     return self._characters[target] or target.Character
 end
 
@@ -72,18 +81,22 @@ function AvatarContext:GetAnimator(player: Player?): Animator?
     return humanoid:FindFirstChildOfClass("Animator")
 end
 
-function AvatarContext:_publish(): ()
+--- Addressed to one player: `Avatar.Character` is `Player`-visibility, so the Bridge requires
+--- a target and refuses to broadcast it.
+function AvatarContext:_publish(player: Player): ()
     local bridge = self._bridge
-    if bridge == nil or not self._isClient then
+    if bridge == nil then
         return
     end
-    bridge:Publish(Constants.Channels.Character, self:GetCharacter(nil))
+
+    local character = self._characters[player]
+    bridge:Publish(Constants.Channels.Character, if character ~= nil then character.Name else nil, player)
 end
 
 function AvatarContext:_bindCharacter(player: Player, character: Model): ()
     self._characters[player] = character
     self.CharacterAdded:Fire(player, character)
-    self:_publish()
+    self:_publish(player)
 end
 
 function AvatarContext:_unbindCharacter(player: Player): ()
@@ -94,7 +107,7 @@ function AvatarContext:_unbindCharacter(player: Player): ()
 
     self._characters[player] = nil
     self.CharacterRemoving:Fire(player, character)
-    self:_publish()
+    self:_publish(player)
 end
 
 function AvatarContext:_trackPlayer(player: Player): ()
@@ -125,14 +138,15 @@ function AvatarContext:Start(): ()
     end))
     self._maid:Add(Players.PlayerRemoving:Connect(function(player: Player)
         self:_unbindCharacter(player)
+        -- Per-player connections die with the player; the maid key is what makes that ordered
+        -- rather than hopeful.
         self._maid:Remove(`Player:{player.UserId}`)
+        self._characters[player] = nil
     end))
 
     for _, player in Players:GetPlayers() do
         self:_trackPlayer(player)
     end
-
-    self:_publish()
 end
 
 function AvatarContext:Destroy(): ()

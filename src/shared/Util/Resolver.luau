@@ -1,6 +1,6 @@
 --!strict
 --[[
-    Unrest / Bridge / Resolver
+    Unrest / Util / Resolver
 
     The whiteboard's "Typed Check Lua Resolver".
 
@@ -31,14 +31,29 @@ local DESCRIPTOR_SCHEMA: Schema = {
     Tag = { Kind = "string", Hint = 'a CollectionService tag, e.g. Tag = "Unrest"' },
     Selector = { Kind = "string", Hint = 'a ClassName tested with :IsA(), e.g. Selector = "TextButton"' },
     Name = { Kind = "string", Hint = 'an exact Instance.Name, e.g. Name = "ToggleMenu"' },
+    Role = { Kind = "string", Hint = 'the UnrestRole attribute, e.g. Role = "ToggleMenu"' },
+    Group = { Kind = "string", Hint = 'the UnrestGroup attribute, e.g. Group = "MainMenu"' },
     Ancestor = { Kind = "Instance", Hint = "the Instance to search under when no Tag is given" },
     Recursive = { Kind = "boolean", Hint = "search all descendants of Ancestor (defaults to true)" },
 }
 
+--[[
+    The handler matrix, in the order a pointer travels: enter, press, release, activate,
+    leave. Whether a given element *supports* one of these is the adapter's business and is
+    answered at bind time; the Resolver only checks that the table is shaped like a handler
+    table at all.
+]]
 local HANDLER_SCHEMA: Schema = {
     Active = { Kind = "function", Hint = "Activated / MouseClick / Triggered, e.g. Active = function(element) end" },
+    Secondary = { Kind = "function", Hint = "MouseButton2Click, e.g. Secondary = function(element) end" },
+    Press = { Kind = "function", Hint = "pointer down, e.g. Press = function(element) end" },
+    Release = { Kind = "function", Hint = "pointer up, e.g. Release = function(element) end" },
     Hover = { Kind = "function", Hint = "MouseEnter, e.g. Hover = function(element) end" },
     Unhover = { Kind = "function", Hint = "MouseLeave, e.g. Unhover = function(element) end" },
+    Focus = { Kind = "function", Hint = "TextBox gained focus, e.g. Focus = function(element) end" },
+    Blur = { Kind = "function", Hint = "TextBox lost focus, e.g. Blur = function(element) end" },
+    Submit = { Kind = "function", Hint = "TextBox committed with Enter, e.g. Submit = function(element, text) end" },
+    Changed = { Kind = "function", Hint = "the value property changed, e.g. Changed = function(element, value) end" },
     Added = { Kind = "function", Hint = "an element started matching, e.g. Added = function(element) end" },
     Removed = { Kind = "function", Hint = "an element stopped matching, e.g. Removed = function(element) end" },
 }
@@ -51,9 +66,12 @@ local SYSTEM_SCHEMA: Schema = {
     Destroy = { Kind = "function", Hint = "Destroy = function(self) end" },
 }
 
-local COMPONENT_SCHEMA: Schema = {
-    Name = { Kind = "string", Hint = 'the unique component key, e.g. Name = "DxChipsX"' },
-    Create = { Kind = "function", Hint = "Create = function(props, bridge): ComponentHandle" },
+local ADAPTER_SCHEMA: Schema = {
+    ClassName = { Kind = "string", Hint = 'the Roblox ClassName this adapter teaches, e.g. ClassName = "TextButton"' },
+    Extends = { Kind = "string", Hint = 'the adapter this one composes on, e.g. Extends = "GuiButton"' },
+    Events = { Kind = "table", Hint = "handler name -> (element, invoke) -> RBXScriptConnection?" },
+    Bindable = { Kind = "table", Hint = "property allowlist, e.g. Bindable = { Text = true }" },
+    ValueProperty = { Kind = "string", Hint = 'the property Changed watches, e.g. ValueProperty = "Text"' },
 }
 
 --------------------------------------------------------------------------------
@@ -169,10 +187,16 @@ function Resolver.Descriptor(value: any): Types.Descriptor
     check(value, DESCRIPTOR_SCHEMA, "Query descriptor", true)
 
     local descriptor = value :: Types.Descriptor
-    if descriptor.Tag == nil and descriptor.Selector == nil and descriptor.Name == nil then
+    if
+        descriptor.Tag == nil
+        and descriptor.Selector == nil
+        and descriptor.Name == nil
+        and descriptor.Role == nil
+        and descriptor.Group == nil
+    then
         fail(
-            "Query descriptor needs at least one of Tag, Selector or Name -- "
-                .. 'e.g. { Tag = "Unrest", Selector = "TextButton", Name = "ToggleMenu" }.'
+            "Query descriptor needs at least one of Tag, Selector, Name, Role or Group -- "
+                .. 'e.g. { Tag = "Unrest", Selector = "TextButton", Role = "ToggleMenu" }.'
         )
     end
     if descriptor.Tag == nil and descriptor.Ancestor == nil then
@@ -187,6 +211,12 @@ function Resolver.Descriptor(value: any): Types.Descriptor
     end
     if descriptor.Selector ~= nil and #descriptor.Selector == 0 then
         fail('Query descriptor field "Selector" must not be an empty string.')
+    end
+    if descriptor.Role ~= nil and #descriptor.Role == 0 then
+        fail('Query descriptor field "Role" must not be an empty string.')
+    end
+    if descriptor.Group ~= nil and #descriptor.Group == 0 then
+        fail('Query descriptor field "Group" must not be an empty string.')
     end
 
     return descriptor
@@ -222,19 +252,53 @@ function Resolver.System(value: any): Types.System
     return system
 end
 
---- Validates a UI component definition.
-function Resolver.Component(value: any): Types.Component
-    check(value, COMPONENT_SCHEMA, "Component definition", false)
+--[[
+    Validates an adapter definition handed to `AdapterRegistry:Register`.
 
-    local component = value :: Types.Component
-    if typeof(component.Name) ~= "string" or #component.Name == 0 then
-        fail('Component definition requires a non-empty string Name, e.g. Name = "DxChipsX".')
-    end
-    if typeof(component.Create) ~= "function" then
-        fail(`Component "{component.Name}" requires a Create(props, bridge) function.`)
+    Adapters are the one place a mistake is otherwise silent: a typo'd `Bindable` key is
+    simply a property that never binds, and a `ClassName` that is not a real Roblox class
+    matches nothing, forever, with no error. So this is strict about shape, and the registry
+    warns separately when an `Extends` names an adapter nobody registered.
+]]
+function Resolver.Adapter(value: any): Types.Adapter
+    check(value, ADAPTER_SCHEMA, "Adapter definition", true)
+
+    local adapter = value :: Types.Adapter
+    if typeof(adapter.ClassName) ~= "string" or #adapter.ClassName == 0 then
+        fail('Adapter definition requires a non-empty string ClassName, e.g. ClassName = "TextButton".')
     end
 
-    return component
+    local events = adapter.Events
+    if events ~= nil then
+        for key, binder in events do
+            if typeof(key) ~= "string" then
+                fail(`Adapter "{adapter.ClassName}" has a non-string Events key ({typeof(key)}).`)
+            end
+            if typeof(binder) ~= "function" then
+                fail(
+                    `Adapter "{adapter.ClassName}" Events["{key}"] must be a function `
+                        .. `(element, invoke) -> RBXScriptConnection?, but got {describe(binder)}.`
+                )
+            end
+        end
+    end
+
+    local bindable = adapter.Bindable
+    if bindable ~= nil then
+        for key, allowed in bindable do
+            if typeof(key) ~= "string" then
+                fail(`Adapter "{adapter.ClassName}" has a non-string Bindable key ({typeof(key)}).`)
+            end
+            if typeof(allowed) ~= "boolean" then
+                fail(
+                    `Adapter "{adapter.ClassName}" Bindable["{key}"] must be a boolean -- Bindable is an `
+                        .. `allowlist, so the entry reads {key} = true. Got {describe(allowed)}.`
+                )
+            end
+        end
+    end
+
+    return adapter
 end
 
 return Resolver

@@ -7,7 +7,7 @@
     View to know goes out through the Bridge.
 
     Lifecycle:
-      1. `Register` collects definitions (validated by the Resolver).
+      1. `Register` collects definitions (shape-checked by `validateSystem` below).
       2. `Start(unrest)` topologically sorts them by `Dependencies`, runs every `Init(unrest)`
          in that order, then runs every `Start()` in that same order. Two passes means a
          system's `Init` may safely reach for another system's public API, because every
@@ -18,9 +18,51 @@
     is booted immediately, and its dependencies must already be running.
 ]]
 
-local Resolver = require(script.Parent.Bridge.Resolver)
-local Signal = require(script.Parent.Bridge.Signal)
+local Signal = require(script.Parent.Util.Signal)
 local Types = require(script.Parent.Types)
+
+--[[
+    A system definition is validated here rather than by a shared descriptor validator: the
+    two have nothing in common but the word "validate". A UI descriptor is untrusted-ish data
+    describing Instances; a system is a table of functions written by the game's own
+    programmers, and everything worth checking about it is a typo.
+]]
+local function validateSystem(definition: Types.System): Types.System
+    if typeof(definition) ~= "table" then
+        error(`[Unrest.Core] a system must be a table, got {typeof(definition)}.`, 0)
+    end
+
+    local candidate = definition :: any
+
+    local name = candidate.Name
+    if typeof(name) ~= "string" or #name == 0 then
+        error("[Unrest.Core] a system must declare a non-empty string `Name`.", 0)
+    end
+
+    local dependencies = candidate.Dependencies
+    if dependencies ~= nil then
+        if typeof(dependencies) ~= "table" then
+            error(`[Unrest.Core] "{name}".Dependencies must be a table of names, got {typeof(dependencies)}.`, 0)
+        end
+        for _, entry in dependencies :: { any } do
+            if typeof(entry) ~= "string" or #entry == 0 then
+                error(`[Unrest.Core] "{name}".Dependencies must contain non-empty system names.`, 0)
+            end
+            if entry == name then
+                error(`[Unrest.Core] "{name}" declares itself as its own dependency.`, 0)
+            end
+        end
+    end
+
+    for _, hook in { "Init", "Start", "Destroy" } do
+        local value = candidate[hook]
+        if value ~= nil and typeof(value) ~= "function" then
+            error(`[Unrest.Core] "{name}".{hook} must be a function, got {typeof(value)}.`, 0)
+        end
+    end
+
+    return definition
+end
 
 local Core = {}
 
@@ -105,7 +147,7 @@ function Core.new(): Types.Core
     end
 
     function core:Register(definition: Types.System): Types.System
-        local system = Resolver.System(definition)
+        local system = validateSystem(definition)
 
         if systems[system.Name] ~= nil then
             error(

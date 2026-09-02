@@ -1,6 +1,6 @@
 --!strict
 --[[
-    Unrest / Bridge / Query
+    Unrest / Adapters / Query
 
     The selector engine behind `Unrest:Query`.
 
@@ -9,102 +9,50 @@
 
       * watched  -- every candidate the source can produce (everything carrying the tag, or
                     everything in the ancestor subtree). Each watched instance keeps a small
-                    maid holding a Destroying connection and, when the descriptor filters on
-                    Name, a Name-changed connection so a rename re-runs the predicate.
+                    maid holding a `Destroying` connection plus exactly the property and
+                    attribute connections this descriptor actually needs: a `Name` or `Role`
+                    filter earns a `Name` watch, a `Role` or `Group` filter earns an
+                    attribute watch, and a class-only filter earns neither.
       * bindings -- the subset that currently matches. Each keeps a maid holding the event
-                    connections created for the handler table.
+                    connections the adapter created for the handler table.
 
     An instance can therefore join and leave the result set any number of times over its
     lifetime, and `Removed` fires exactly once per departure.
+
+    What a handler is allowed to be is not decided here. Query asks the AdapterRegistry to
+    attach the table, and the registry raises if the element's class cannot honour it -- so
+    "a Frame cannot Submit" is one rule in one place, whether the handler arrived from Luau
+    or from an `UnrestCommand` attribute.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
 
-local Maid = require(script.Parent.Maid)
-local Resolver = require(script.Parent.Resolver)
+local Adapters = require(script.Parent)
+local Maid = require(script.Parent.Parent.Util.Maid)
+local Resolver = require(script.Parent.Parent.Util.Resolver)
 local Selector = require(script.Parent.Selector)
-local Signal = require(script.Parent.Signal)
+local Signal = require(script.Parent.Parent.Util.Signal)
 local Types = require(script.Parent.Parent.Types)
 
 local Query = {}
 
 --[[
-    Binding matrix. Anything outside it is a programming error rather than a silent no-op:
-    a query that says `Active` but selects Frames is a query with the wrong Selector, and
-    saying so loudly at bind time is far cheaper than wondering why nothing clicks.
-]]
-local function bindHandlers(element: Instance, handlers: Types.Handlers, maid: Types.Maid, text: string): ()
-    local active = handlers.Active
-    if active ~= nil then
-        if element:IsA("GuiButton") then
-            local button = element :: GuiButton
-            maid:Add(button.Activated:Connect(function()
-                active(element)
-            end))
-        elseif element:IsA("ClickDetector") then
-            local detector = element :: ClickDetector
-            maid:Add(detector.MouseClick:Connect(function()
-                active(element)
-            end))
-        elseif element:IsA("ProximityPrompt") then
-            local prompt = element :: ProximityPrompt
-            maid:Add(prompt.Triggered:Connect(function()
-                active(element)
-            end))
-        else
-            error(
-                `[Unrest.Query] handler "Active" cannot bind to {element:GetFullName()}: a {element.ClassName} `
-                    .. `is not a GuiButton, ClickDetector or ProximityPrompt. `
-                    .. `Narrow the query {text} with Selector = "TextButton" (or drop the Active handler).`,
-                0
-            )
-        end
-    end
-
-    local hover, unhover = handlers.Hover, handlers.Unhover
-    if hover ~= nil or unhover ~= nil then
-        if element:IsA("GuiObject") then
-            local gui = element :: GuiObject
-            if hover ~= nil then
-                maid:Add(gui.MouseEnter:Connect(function()
-                    hover(element)
-                end))
-            end
-            if unhover ~= nil then
-                maid:Add(gui.MouseLeave:Connect(function()
-                    unhover(element)
-                end))
-            end
-        elseif element:IsA("ClickDetector") then
-            local detector = element :: ClickDetector
-            if hover ~= nil then
-                maid:Add(detector.MouseHoverEnter:Connect(function()
-                    hover(element)
-                end))
-            end
-            if unhover ~= nil then
-                maid:Add(detector.MouseHoverLeave:Connect(function()
-                    unhover(element)
-                end))
-            end
-        else
-            local key = if hover ~= nil then "Hover" else "Unhover"
-            error(
-                `[Unrest.Query] handler "{key}" cannot bind to {element:GetFullName()}: a {element.ClassName} `
-                    .. `is not a GuiObject or ClickDetector. Narrow the query {text} with a Selector.`,
-                0
-            )
-        end
-    end
-end
-
---[[
     Creates a live query. `handlers` is optional -- a bare query is still useful for
     `:Elements()` / `:Each()` / the ElementAdded and ElementRemoved signals.
+
+    The handle owns its own lifetime: nothing else holds a reference to it, so a query that
+    outlives its screen must be `:Destroy()`ed by whoever made it.
 ]]
-function Query.new(descriptor: Types.Descriptor, handlers: Types.Handlers?): Types.QueryHandle
+function Query.new(
+    registry: Types.AdapterRegistry,
+    descriptor: Types.Descriptor,
+    handlers: Types.Handlers?
+): Types.QueryHandle
     local compiled = Selector.parse(descriptor)
     local bound: Types.Handlers = if handlers ~= nil then Resolver.Handlers(handlers) else {}
+
+    local watchedProperties, watchedAttributes = Selector.triggers(compiled)
+    local hint = `Narrow the query {compiled.Text} with a Selector or a Role, or drop that handler.`
 
     local lifetime = Maid.new()
     local watched: { [Instance]: Types.Maid } = {}
@@ -140,7 +88,7 @@ function Query.new(descriptor: Types.Descriptor, handlers: Types.Handlers?): Typ
 
         local removed = bound.Removed
         if removed ~= nil then
-            removed(element)
+            removed(element, nil)
         end
         elementRemoved:Fire(element)
     end
@@ -154,11 +102,11 @@ function Query.new(descriptor: Types.Descriptor, handlers: Types.Handlers?): Typ
         bindings[element] = binding
         table.insert(elements, element)
 
-        bindHandlers(element, bound, binding, compiled.Text)
+        Adapters.bind(registry, element, bound, binding, hint)
 
         local added = bound.Added
         if added ~= nil then
-            added(element)
+            added(element, nil)
         end
         elementAdded:Fire(element)
     end
@@ -191,9 +139,14 @@ function Query.new(descriptor: Types.Descriptor, handlers: Types.Handlers?): Typ
         local watcher = Maid.new()
         watched[element] = watcher
 
-        -- A rename can move an element in or out of the result set.
-        if compiled.Name ~= nil then
-            watcher:Add(element:GetPropertyChangedSignal("Name"):Connect(function()
+        -- A rename, or an edit to UnrestRole / UnrestGroup, can move an element in or out.
+        for _, property in watchedProperties do
+            watcher:Add(element:GetPropertyChangedSignal(property):Connect(function()
+                evaluate(element)
+            end))
+        end
+        for _, attribute in watchedAttributes do
+            watcher:Add(element:GetAttributeChangedSignal(attribute):Connect(function()
                 evaluate(element)
             end))
         end
@@ -242,7 +195,7 @@ function Query.new(descriptor: Types.Descriptor, handlers: Types.Handlers?): Typ
             error(`[Unrest.Query] :Each expects a function, got {typeof(visitor)}.`, 0)
         end
         for _, element in table.clone(elements) do
-            visitor(element)
+            visitor(element, nil)
         end
         return typed
     end
@@ -261,7 +214,7 @@ function Query.new(descriptor: Types.Descriptor, handlers: Types.Handlers?): Typ
         -- Rebuild every binding so a replaced handler does not leave its predecessor connected.
         for element, binding in bindings do
             binding:Clean()
-            bindHandlers(element, bound, binding, compiled.Text)
+            Adapters.bind(registry, element, bound, binding, hint)
         end
 
         return typed
