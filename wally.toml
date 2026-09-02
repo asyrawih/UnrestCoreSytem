@@ -9,5 +9,6 @@ registry = "https://github.com/UpliftGames/wally-index"
 # must never require it. It is used by the user-owned transport adapter that plugs into
 # the Transport interface described in docs/PROPOSAL-TRANSPORT.md.
 ByteNet = "elitriare/bytenet-max@1.0.0"
+Scythe = "synttx/scythe@1.2.0"
 
 [dev-dependencies]
