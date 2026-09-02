@@ -20,7 +20,7 @@
                              rather than a lie.
 
     Both fire on the *server* as well as the client. The framework only adopts on the
-    client, and a handler here is still just a request: the command contract decides.
+    client, so these bindings exist on one side and the events on the other are ignored.
 ]]
 
 local Types = require(script.Parent.Parent.Types)

@@ -68,10 +68,10 @@
         UnrestBind    "Text"
         UnrestFormat  "Status: {value}"
 
-    An attribute grants no privilege. `UnrestCommand` goes through the same
-    `Bridge:Dispatch` as hand-written Luau, so the command's contract still decides whether
-    the request is allowed to happen at all. Adding an attribute in Studio can never widen
-    what a client may ask for -- the permission was never in the attribute.
+    An attribute is not a second mechanism. `UnrestCommand` goes through the same
+    `Bridge:Dispatch` as hand-written Luau and reaches the same handlers, so a screen wired
+    entirely in Studio and one wired entirely in code are indistinguishable from the far
+    side of the Bridge.
 
     ---------------------------------------------------------------------------
     Resolution: three layers, most specific wins
@@ -347,10 +347,9 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     --[[
         `UnrestCommand` -> the adapter's `Active` event -> `Bridge:Dispatch`.
 
-        `UnrestCooldown` is a client-side debounce and nothing more. It exists so a designer
-        can stop a button double-firing on a fat-fingered double click; it is not a rate
-        limit, it lives entirely inside this client's memory, and anyone who cares to remove
-        it can. The real limit is the per-player budget the server applies on arrival.
+        `UnrestCooldown` is a debounce and nothing more. It exists so a designer can stop a
+        button double-firing on a fat-fingered double click; it lives entirely in this
+        element's memory and is forgotten when the element is released.
     ]]
     local function wireCommand(element: Types.ManagedElement, maid: Types.Maid): ()
         local instance = element.Instance
@@ -388,7 +387,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         The target property is `UnrestBind`, or the adapter's `ValueProperty` when the
         designer did not say (so a TextLabel with only a channel writes its Text, which is
         what they meant). It must be on the adapter's `Bindable` allowlist either way: a
-        replicated value is never permitted to write an arbitrary property.
+        published value is never permitted to write an arbitrary property.
     ]]
     local function wireChannel(element: Types.ManagedElement, maid: Types.Maid): ()
         local instance = element.Instance

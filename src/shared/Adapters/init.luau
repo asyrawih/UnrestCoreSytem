@@ -20,9 +20,10 @@
       2. flatten that adapter's chain into one table, derived-wins, and cache the result
          under the instance's ClassName so the walk happens once per class per session.
 
-    `Bindable` is an allowlist and not a denylist, deliberately. A channel value arriving
-    from the server must never be able to write an arbitrary property of an arbitrary
-    instance; `UnrestBind = "Parent"` is not a clever trick, it is a rejected attribute.
+    `Bindable` is an allowlist and not a denylist, deliberately. A channel value must never
+    be able to write an arbitrary property of an arbitrary instance -- rebuilding the tree
+    from a published string is not something a bound label should be able to do;
+    `UnrestBind = "Parent"` is not a clever trick, it is a rejected attribute.
 
     `Register` is public: a custom class, or a house style that wants `UIStroke.Thickness`
     bindable when the built-in adapter does not, is one call away at runtime.

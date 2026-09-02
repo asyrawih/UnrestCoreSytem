@@ -10,16 +10,6 @@
         "$path": "src/shared"
       },
 
-      "Game": {
-        "$path": "src/game"
-      },
-
-      "GameTransport": {
-        "$path": {
-          "optional": "src/game-transport"
-        }
-      },
-
       "Packages": {
         "$path": {
           "optional": "Packages"

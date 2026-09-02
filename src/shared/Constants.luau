@@ -3,12 +3,10 @@
     Unrest / Constants
 
     Stringly-typed values more than one layer needs, and nothing a game names. An attribute
-    or remote name is never spelled twice here, so a typo is a nil index rather than a silent
-    no-op.
+    name is never spelled twice here, so a typo is a nil index rather than a silent no-op.
 
-    Command and channel names are deliberately absent. They belong to the game, which
-    registers them with `Contracts:Declare` and keeps its own names wherever it likes; the
-    framework only ever handles them as opaque strings.
+    Command and channel names are deliberately absent. They belong to the game, which keeps
+    its own names wherever it likes; the framework only ever handles them as opaque strings.
 ]]
 
 local Constants = {
@@ -45,8 +43,8 @@ local Constants = {
         Role = "UnrestRole",
         --- Free-form grouping ("MainMenu", "Shop"), selectable via `Descriptor.Group`.
         Group = "UnrestGroup",
-        --- Command dispatched when the element is activated. Subject to the same contract
-        --- checks as a code-driven dispatch -- an attribute is not a privilege escalation.
+        --- Command dispatched on the Bridge when the element is activated. It reaches
+        --- whatever registered `Bridge:Handle` for that name, and nothing else.
         Command = "UnrestCommand",
         --- Payload sent with `Command`. Attributes are primitives only, by Roblox's design.
         Payload = "UnrestPayload",
@@ -57,8 +55,8 @@ local Constants = {
         Bind = "UnrestBind",
         --- Format string applied to the channel value, e.g. "Status: {value}".
         Format = "UnrestFormat",
-        --- Seconds of client-side debounce between activations. Advisory only: the server
-        --- rate limit is the real one.
+        --- Seconds of client-side debounce between activations, so a fat-fingered double
+        --- click does not dispatch twice.
         Cooldown = "UnrestCooldown",
         --- Names an entry in `Presets.luau`, which expands into several of the attributes
         --- above. One attribute instead of five, defined once and reused.
@@ -87,42 +85,6 @@ local Constants = {
         UnrestGroup = true,
         UnrestCooldown = true,
         UnrestPreset = true,
-    }),
-
-    --- Names of the replicated objects. The server creates them; the client waits for them.
-    Remotes = table.freeze({
-        Folder = "UnrestRemotes",
-        --- Client -> server, fire and forget.
-        Dispatch = "UnrestDispatch",
-        --- Client -> server, request/response. The server never invokes the client.
-        Invoke = "UnrestInvoke",
-        --- Server -> client, channel replication.
-        Publish = "UnrestPublish",
-    }),
-
-    --[[
-        Hard ceilings applied to anything arriving from a client, before a handler sees it.
-        These are not tuning knobs for gameplay: they bound the work a malicious client can
-        make the server do.
-    ]]
-    Limits = table.freeze({
-        --- Deepest nested table accepted in a payload.
-        MaxPayloadDepth = 4,
-        --- Most entries accepted in any one table of a payload.
-        MaxPayloadEntries = 32,
-        --- Longest string accepted anywhere in a payload.
-        MaxStringLength = 256,
-        --- Default per-player, per-command budget when a contract declares none.
-        DefaultRateCount = 10,
-        DefaultRateWindow = 1,
-        --- Per-player budget across every command combined, so a client cannot shotgun
-        --- many different cheap commands to get around per-command limits.
-        GlobalRateCount = 60,
-        GlobalRateWindow = 1,
-        --- Seconds a client waits for an `Invoke` response before giving up.
-        InvokeTimeout = 10,
-        --- Rejections tolerated per player before `Net.Server` reports abuse to its hook.
-        AbuseThreshold = 25,
     }),
 }
 

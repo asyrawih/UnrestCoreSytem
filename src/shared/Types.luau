@@ -2,8 +2,8 @@
 --[[
     Unrest / Types
 
-    The public type surface, in one place. It re-exports the adoption types and the net
-    types so user code only ever requires this module.
+    The public type surface, in one place. It re-exports the adoption types so user code only
+    ever requires this module.
 
         local Types = require(ReplicatedStorage.Unrest.Types)
         local descriptor: Types.Descriptor = { Tag = "Unrest", Selector = "TextButton" }
@@ -11,11 +11,9 @@
     Layer map:
 
         Core (Model)  ->  Bridge (Controller)  ->  Elements (adopted Studio UI)
-                              |
-                              +-- Net: the same Bridge, across the client/server line
 
-    Core never touches an Instance. Adopted UI never touches a system. Everything crosses
-    at the Bridge, and the Bridge asks the contracts what is allowed.
+    Core never touches an Instance. Adopted UI never touches a system. Everything crosses at
+    the Bridge, which is a local bus and nothing more.
 
     NO GAME SHAPES LIVE HERE. `System` is the extension point and `Core:Register` is the
     door; a game exports the type of each system it writes from that system's own module,
@@ -24,9 +22,7 @@
 ]]
 
 local AdapterTypes = require(script.Parent.Adapters.Types)
-local NetTypes = require(script.Parent.Net.Types)
 local Primitives = require(script.Parent.Primitives)
-local Transport = require(script.Parent.Net.Transport)
 
 --------------------------------------------------------------------------------
 -- Re-exports
@@ -54,31 +50,6 @@ export type ElementManager = AdapterTypes.ElementManager
 export type Descriptor = AdapterTypes.Descriptor
 export type CompiledSelector = AdapterTypes.CompiledSelector
 export type QueryHandle = AdapterTypes.QueryHandle
-
-export type ArgumentKind = NetTypes.ArgumentKind
-export type ArgumentSpec = NetTypes.ArgumentSpec
-export type RateLimitSpec = NetTypes.RateLimitSpec
-export type CommandSource = NetTypes.CommandSource
-export type CommandHandler = NetTypes.CommandHandler
-export type CommandContract = NetTypes.CommandContract
-export type ChannelVisibility = NetTypes.ChannelVisibility
-export type ChannelContract = NetTypes.ChannelContract
-export type ChannelDeclaration = NetTypes.ChannelDeclaration
-export type Contracts = NetTypes.Contracts
-export type RejectionReason = NetTypes.RejectionReason
-export type Rejection = NetTypes.Rejection
-export type InvokeResult = NetTypes.InvokeResult
-export type NetServer = NetTypes.NetServer
-export type NetClient = NetTypes.NetClient
-
---- The replaceable half of the net layer. A game implements these to put the framework on a
---- wire of its own; the framework implements the default over Roblox remotes.
-export type ServerTransport = Transport.ServerTransport
-export type ClientTransport = Transport.ClientTransport
-export type TransportProvider = Transport.TransportProvider
-export type RequestHandler = Transport.RequestHandler
-export type PublishHandler = Transport.PublishHandler
-export type RefusalReporter = Transport.RefusalReporter
 
 --------------------------------------------------------------------------------
 -- Core: systems and registry
@@ -120,40 +91,35 @@ export type Core = {
 }
 
 --------------------------------------------------------------------------------
--- Bridge: the controller, and the network boundary
+-- Bridge: the controller
 --------------------------------------------------------------------------------
 
+--- Receives whatever `Bridge:Dispatch` was given, and nothing else. There is no source
+--- argument because every dispatch is local: the caller is on this side of the call stack.
+export type CommandHandler = (payload: any) -> ()
+
 --[[
-    The only path between Core and adopted UI, and the only path across the network.
+    The only path between the code that owns state and adopted UI.
 
-      * Core -> UI  : `Publish` / `Subscribe`, retained, so a late subscriber still gets
-                      the current value and mount order stops mattering.
-      * UI   -> Core: `Dispatch` (fire and forget) and `Invoke` (request/response).
-      * Handlers    : `Handle` on the owning realm.
+      * state -> UI : `Publish` / `Subscribe`, retained, so a late subscriber still gets the
+                      current value and mount order stops mattering.
+      * UI -> state : `Dispatch`, fire and forget, answered by whatever called `Handle`.
 
-    Whether a dispatch stays local or crosses the wire is decided by the command's
-    contract, not by the caller. Client code writes the same line either way.
+    A local bus. Nothing here crosses a machine boundary, and a command with no handler is a
+    silent no-op rather than an error.
 ]]
 export type Bridge = {
     Context: RuntimeContext,
-    Contracts: Contracts,
-    --- Fires when a request is refused, on whichever side refused it.
-    Rejected: Signal<Rejection>,
 
-    --[[
-        Publishes retained state. On the server the channel's `Visibility` decides who sees
-        it: `Server` stays local, `Player` needs `target`, `Public` goes to everyone.
-    ]]
-    Publish: (self: Bridge, channel: string, value: any, target: Player?) -> (),
+    --- Publishes retained state: the value is kept and handed to every later subscriber.
+    Publish: (self: Bridge, channel: string, value: any) -> (),
     Subscribe: (self: Bridge, channel: string, handler: (value: any) -> ()) -> Connection,
     --- Last published value on `channel`, or nil.
     Peek: (self: Bridge, channel: string) -> any,
 
-    --- Sends an intent. Local or remote per the contract. Never yields.
+    --- Sends an intent to every registered handler. Never yields.
     Dispatch: (self: Bridge, command: string, payload: any) -> (),
-    --- Sends an intent and waits for the handler's value. Yields. Contract must allow it.
-    Invoke: (self: Bridge, command: string, payload: any) -> InvokeResult,
-    --- Registers the handler for a command, on the realm that owns it.
+    --- Registers a handler for a command. Several may listen to the same name.
     Handle: (self: Bridge, command: string, handler: CommandHandler) -> Connection,
 
     Destroy: (self: Bridge) -> (),
@@ -178,13 +144,6 @@ export type Unrest = {
 
     Start: (self: Unrest) -> Unrest,
     Stop: (self: Unrest) -> (),
-    --[[
-        Replaces the default remotes transport, for every command and every channel. Must be
-        called between `require` and `:Start()`: the client half is attached at require time
-        but does not build its transport until the first of `:Start()` or the first dispatch,
-        and installing one after that throws rather than splitting the traffic in two.
-    ]]
-    UseTransport: (self: Unrest, provider: TransportProvider) -> Unrest,
     IsStarted: (self: Unrest) -> boolean,
 
     Register: (self: Unrest, definition: System) -> System,
@@ -195,8 +154,6 @@ export type Unrest = {
     Query: (self: Unrest, descriptor: Descriptor, handlers: Handlers?) -> QueryHandle,
     --- Shorthand for `Unrest.Bridge:Dispatch`.
     Dispatch: (self: Unrest, command: string, payload: any) -> (),
-    --- Shorthand for `Unrest.Bridge:Invoke`.
-    Invoke: (self: Unrest, command: string, payload: any) -> InvokeResult,
 }
 
 -- Type-only module: the returned table is intentionally empty.

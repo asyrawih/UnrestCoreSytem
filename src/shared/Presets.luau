@@ -23,9 +23,9 @@
     fills it with `Presets.Register` at startup and the framework never needs to know what
     went in.
 
-    Registering a preset changes no framework code and grants no privilege. A preset naming
-    a command the contracts do not declare is still refused at dispatch -- a preset is a
-    shorthand, not a permission.
+    Registering a preset changes no framework code. A preset naming a command nothing
+    handles simply dispatches into an empty room -- a preset is a shorthand for a bundle of
+    attributes, and nothing more.
 ]]
 
 export type Preset = { [string]: any }
@@ -55,9 +55,8 @@ end
     a game names its own bundles at startup without editing this file.
 
     Replacing a name already registered is allowed and intentional -- a game that wants one
-    of its presets to mean something else should be able to say so in one place. That is the
-    opposite of `Contracts:Declare`, which refuses a repeat: a preset is a convenience with
-    no security meaning, while a command name has exactly one policy.
+    of its presets to mean something else should be able to say so in one place, rather than
+    finding every element that names it.
 ]]
 function Presets.Register(name: string, preset: Preset): Preset
     if typeof(name) ~= "string" or name == "" then

@@ -37,14 +37,16 @@ selene src && stylua --check src
   that one is refused on arrival and stays out of the set, and because the refusal reaches no
   caller it is raised on its own thread rather than unwinding the cascade sweep that found it.
 - Framework vocabulary lives once in `src/shared/Constants.luau` — the tag, the attribute
-  names, the remote names, the limits. **Game names do not live there.** Channel and command
-  names belong to the game, in `src/game/`, and the framework must never spell one.
-- An attribute grants **no privilege**. `UnrestCommand` goes through the same
-  `Bridge:Dispatch` as hand-written Luau, and the command contract decides what a client may
-  ask for. Contracts are a registry the game fills through `Contracts:Declare`, so an empty
-  registry means nothing is callable rather than everything.
+  names, the inheritable set. **Game names do not live there.** Channel and command names
+  belong to the game, next to the code that handles them, and the framework must never spell
+  one.
+- An attribute is **not a second mechanism**. `UnrestCommand` goes through the same
+  `Bridge:Dispatch` as hand-written Luau and reaches the same handlers, so a screen wired in
+  Studio and one wired in code are indistinguishable from the far side of the Bridge.
 - Layer map: `Core` (never touches an Instance) -> `Bridge` -> `Elements` (never touches a
-  system). `Net` is the same Bridge across the client/server line.
+  system). The `Bridge` is a **local bus**: `Publish`/`Subscribe`/`Peek` one way,
+  `Dispatch`/`Handle` the other, retained channels, and nothing that crosses a machine.
+  There is no networking layer; the framework is UI abstraction only.
 - **The cascade is one rule and one ledger.** `Selector` holds the rule -- `isManaged`,
   `cascadeUnder`, `isGate`, `gatesAbove`, `isPresent` -- as pure predicates with no state.
   `Adapters/Cascade.luau` holds the *bookkeeping* that keeps those answers live: the tagged
@@ -128,5 +130,5 @@ an instance the designer already built — not a new mount point.
 
 ## Docs
 
-`docs/ARCHITECTURE.md`, `docs/UI-BINDING.md`, `docs/REMOTE-SECURITY.md` are part of the
-deliverable — keep them in step with the code.
+`docs/ARCHITECTURE.md` and `docs/UI-BINDING.md` are part of the deliverable — keep them in
+step with the code. The networking pages went with the networking layer.

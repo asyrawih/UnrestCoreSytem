@@ -2,29 +2,26 @@
 --[[
     Game -- ServerScriptService.Game
 
-    The server bootstrap. Four lines, in the only order they work in:
+    The server bootstrap. Two lines, in the only order they work in:
 
-        1. contracts   declared by requiring `ReplicatedStorage.Game`, in both realms
-        2. systems     registered, then started, which is where handlers appear
-        3. gateway     opened LAST, which is when the remotes appear
+        1. systems  registered
+        2. started  Init then Start, which is where handlers appear
 
-    Step 3 is last on purpose, and `Unrest:OpenGateway()` is written out here rather than
-    hidden inside `:Start()` so that it stays last on purpose. Until it runs there is no
-    remote for a client to send on, so the earliest request that can physically arrive already
-    has a handler waiting for it.
+    There is nothing to open afterwards. The framework carries no traffic between realms, so
+    the server's Bridge is the server's alone: a channel published here is read by server code
+    here, and a command dispatched here is answered by a handler registered here. Nothing a
+    client does can reach this script, because there is no wire for it to arrive on.
 
-    Everything under `Systems/` is server-authoritative and no client holds a reference to any
-    of it. The only way in is the gateway.
+    That is worth saying plainly, because it moves a burden rather than removing one. The
+    framework used to check a contract, a rate budget and a payload schema before a handler
+    ran. Now a handler runs because this game's own code asked it to, so if a system needs a
+    payload to be a certain shape, that system is what checks it.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Unrest = require(ReplicatedStorage.Unrest)
 
---- With ByteNet installed, the wire is chosen here, before `:Start()`:
---- `Unrest:UseTransport(require(ReplicatedStorage.GameTransport.Transport))`. Absent that, remotes.
-Unrest:Register(require(script.Systems.Greeter)) -- 2. register systems
+Unrest:Register(require(script.Systems.Greeter)) -- 1. register systems
 
-local unrest = Unrest:Start() -- 3. Init then Start; every handler is now registered
-
-unrest:OpenGateway() -- 4. the remotes appear; only now can a client speak
+Unrest:Start() -- 2. Init then Start; every handler is now registered

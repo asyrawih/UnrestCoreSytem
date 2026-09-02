@@ -122,7 +122,7 @@ export type Handlers = {
         is declared on `GuiObject` -- so it binds happily to things a player has no reason to
         press. And on a prompt the hold events only exist when `HoldDuration > 0`: with the
         default of zero, `Press` and `Release` never fire once, while `Active` fires normally.
-        `HoldDuration` is bindable, so a channel can turn this pair off from the server.
+        `HoldDuration` is bindable, so a channel can turn this pair off.
     ]]
     Press: ElementHandler?,
     --[[
@@ -365,8 +365,8 @@ export type ManagedElement = {
     Owns adoption. Watches the framework tag, resolves an adapter per element, wires the
     declarative attributes, and answers queries.
 
-    Client-only by design. Server-side code must never trust a UI event: the authority is
-    the command contract, not the button that dispatched it.
+    Client-only by design. The server has no screen, so adopting there would wire events
+    that nobody can ever fire.
 ]]
 export type ElementManager = {
     ManagedAdded: Signal<ManagedElement>,

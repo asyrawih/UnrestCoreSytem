@@ -2,65 +2,38 @@
 --[[
     Unrest / Bridge
 
-    The controller column of the whiteboard, and the client/server line. One object, because
-    they are the same seam seen from two angles:
+    The controller column of the whiteboard: a local bus, and the only thing that stands
+    between the code that owns state and the Studio-built UI that shows it.
 
-      * Core publishes state        -> `Bridge:Publish(channel, value, target?)`
-      * UI follows state            -> `Bridge:Subscribe(channel, handler)` / `:Peek(channel)`
-      * UI sends intent             -> `Bridge:Dispatch(command, payload)` / `:Invoke(...)`
-      * A system handles intent     -> `Bridge:Handle(command, handler)`
+      * State goes out    -> `Bridge:Publish(channel, value)`
+      * UI follows state  -> `Bridge:Subscribe(channel, handler)` / `:Peek(channel)`
+      * UI sends intent   -> `Bridge:Dispatch(command, payload)`
+      * Something acts    -> `Bridge:Handle(command, handler)`
 
-    Channels are RETAINED: a late subscriber immediately receives the last published value, so
-    a label that mounts after the state was published still renders the current value. That is
-    what makes the Bridge safe to use from UI with arbitrary mount order.
+    Two directions, four verbs, no wire. Everything here happens inside one Luau VM.
 
-    WHAT MAKES IT A NETWORK BOUNDARY
+    CHANNELS ARE RETAINED, and that is a UI feature rather than a bookkeeping one. The last
+    value published on a channel is kept, and a subscriber that arrives afterwards is handed
+    it immediately. Without that, a label bound to `UnrestChannel` would render blank until
+    the next publish -- so the correctness of a screen would depend on whether it happened to
+    mount before or after the state it displays. With it, mount order stops mattering: a
+    label is correct on its first frame no matter when it appeared.
 
-    A caller writes the same line on either side:
+    WHY THIS IS A SEPARATE OBJECT AT ALL, given how small it is. `Elements` adopts instances
+    and knows nothing about where a value came from; the code that owns the value knows
+    nothing about instances. The Bridge is the one name both sides can say. `UnrestCommand`
+    goes out through `Dispatch` and `UnrestChannel` comes in through `Subscribe`, so a
+    designer can wire a whole screen in Studio without either side learning about the other.
 
-        Bridge:Dispatch("Example.Action", "Confirm")
-
-    and the command's contract decides what that means. A command with `Realm = "Server"`
-    runs locally on the server and is forwarded over the gateway from a client. The
-    caller never chooses; there is no `:DispatchToServer`. This is the whole reason the
-    security model can be enforced in one place: if the caller cannot pick the transport, the
-    caller cannot route around the gate.
-
-    ROUTING, exhaustively:
-
-        contract.Realm == Context            run locally (validated first, see below)
-        Client, Realm == "Server"            forward through the client gateway
-        Server, Realm == "Client"            REFUSED, WrongRealm
-
-    That last row is a design decision, not an omission. The server never asks a client to do
-    anything: it cannot verify that the client did it, so a "command" pointed that way would be
-    a suggestion dressed as a mechanism. Server -> client traffic is state on a channel, and
-    the client decides what to render.
-
-    THE GATEWAYS, and why the two halves are attached differently:
-
-      * The client half (`Net/Client.luau`) is built in the constructor, because every client
-        needs one and nothing has to be decided first.
-      * The server half is built on demand by `Unrest:OpenGateway()` and attached through
-        `BridgeSeam.AttachGateway`. Not because it is unreachable from here -- both halves sit
-        in ReplicatedStorage -- but because opening it is a decision with an order to it: the
-        remotes appear at that moment, so it happens after every handler is registered.
-
-    THE TRANSPORT LIVES HERE TOO, for the same reason: this object owns the network seam, so
-    it is the one place both halves can read the same answer to "which transport". A game
-    installs one with `Unrest:UseTransport(...)`; the client half builds its side lazily and
-    the server gateway reads `:TransportProvider()` when it starts. One store means the two
-    halves cannot end up on different wires, which is the failure a second door would allow.
+    A command with no handler is a no-op, deliberately and quietly. A screen is often built
+    before the code behind it, and a button that does nothing yet should not warn on every
+    click. What is NOT quiet is a handler that throws: it is caught, reported with its
+    traceback, and the other handlers still run.
 ]]
 
-local Contracts = require(script.Parent.Net.Contracts)
 local Maid = require(script.Parent.Util.Maid)
-local NetClient = require(script.Parent.Net.Client)
-local NetTypes = require(script.Parent.Net.Types)
 local Signal = require(script.Parent.Util.Signal)
-local Transport = require(script.Parent.Net.Transport)
 local Types = require(script.Parent.Types)
-local Validate = require(script.Parent.Net.Validate)
 
 type Channel = {
     Value: any,
@@ -70,7 +43,7 @@ type Channel = {
 
 local Bridge = {}
 
-function Bridge.new(context: Types.RuntimeContext, provider: Transport.TransportProvider?): Types.Bridge
+function Bridge.new(context: Types.RuntimeContext): Types.Bridge
     if context ~= "Server" and context ~= "Client" then
         error(`[Unrest.Bridge] .new expects "Server" or "Client", got {tostring(context)}.`, 0)
     end
@@ -78,18 +51,10 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
     local channels: { [string]: Channel } = {}
     local handlers: { [string]: { Types.CommandHandler } } = {}
     local lifetime = Maid.new()
-    local gateway: NetTypes.NetGateway? = nil
-    local transport: Transport.TransportProvider? = provider
-    --- The client half, built at the bottom of this constructor. Nil on the server.
-    local netClient: NetTypes.NetClient? = nil
     local destroyed = false
-
-    local rejected: Types.Signal<Types.Rejection> = Signal.new("Bridge.Rejected")
 
     local bridge = {
         Context = context,
-        Contracts = Contracts,
-        Rejected = rejected,
     }
 
     local function assertAlive(method: string): ()
@@ -103,28 +68,6 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
             error(`[Unrest.Bridge] :{method} expects a non-empty {label} name, got {typeof(value)}.`, 0)
         end
         return value :: string
-    end
-
-    --[[
-        Every refusal on this side of the wire. `Detail` is developer-facing and stays local:
-        on the server it is logged, and the only thing that ever travels back to a caller is
-        the coarse `Reason`.
-    ]]
-    local function reject(command: string, reason: Types.RejectionReason, detail: string): Types.InvokeResult
-        rejected:Fire({
-            Command = command,
-            Reason = reason,
-            Detail = detail,
-            Player = nil,
-        })
-        return { Ok = false, Value = nil, Reason = reason }
-    end
-
-    --- A Bridge-level refusal is always a bug in the calling code -- an undeclared command, a
-    --- realm mix-up, an Invoke on a command with no response. Those deserve a warning.
-    local function rejectLoudly(command: string, reason: Types.RejectionReason, detail: string): Types.InvokeResult
-        warn(`[Unrest.Bridge] "{command}" refused ({reason}): {detail}`)
-        return reject(command, reason, detail)
     end
 
     local function channelFor(name: string): Channel
@@ -142,127 +85,18 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
         return channel
     end
 
-    local function visibilityOf(name: string): Types.ChannelVisibility
-        local contract = Contracts:GetChannel(name)
-        -- Deny by default, one last time: an undeclared channel is `Server`, so a channel
-        -- someone forgot to declare cannot leak by omission.
-        return if contract ~= nil then contract.Visibility else "Server"
-    end
-
-    --- Retains and fans out locally. Split out because a replicated value arriving from the
-    --- server takes this path and must NOT take the replication path again.
-    local function retain(name: string, value: any): ()
-        local entry = channelFor(name)
-        entry.Value = value
-        entry.HasValue = true
-        entry.Signal:Fire(value)
-    end
-
-    --[[
-        Runs the handlers for a command. Deliberately gate-free: this is the seam the server
-        gateway calls *after* it has done the contract check, the rate check, the schema check
-        and the authorization check. Nothing that took input from a client may call it directly.
-    ]]
-    local function execute(command: string, source: Types.CommandSource, payload: any): Types.InvokeResult
-        local registered = handlers[command]
-        if registered == nil or #registered == 0 then
-            return reject(command, "NoHandler", `no handler is registered for "{command}" on the {context}.`)
-        end
-
-        local value: any = nil
-        local failure: string? = nil
-
-        -- Snapshot: a handler is allowed to add or drop another handler mid-dispatch.
-        for _, handler in table.clone(registered) do
-            --[[
-                Handler isolation. One misbehaving system must not stall the gateway for every
-                other player, so each handler runs under `xpcall` and the traceback is captured
-                here, on the server, where it is useful. The caller gets a generic failure.
-            ]]
-            local ok, result = xpcall(handler, function(err: any): string
-                return debug.traceback(tostring(err), 2)
-            end, source, payload)
-
-            if ok then
-                -- First non-nil return wins; later handlers are observers.
-                if value == nil then
-                    value = result
-                end
-            elseif failure == nil then
-                failure = tostring(result)
-            end
-        end
-
-        if failure ~= nil then
-            warn(`[Unrest.Bridge] handler for "{command}" errored:\n{failure}`)
-            return reject(command, "HandlerError", failure)
-        end
-
-        return { Ok = true, Value = value, Reason = nil }
-    end
-
     --------------------------------------------------------------------------------
     -- Channels
     --------------------------------------------------------------------------------
 
-    function bridge:Publish(channel: string, value: any, target: Player?): ()
+    function bridge:Publish(channel: string, value: any): ()
         assertAlive("Publish")
         local name = assertName(channel, "Publish", "channel")
 
-        if context ~= "Server" then
-            -- A client publishes only to itself. Client state never replicates: the server is
-            -- the sole author of anything another player could see.
-            retain(name, value)
-            return
-        end
-
-        local visibility = visibilityOf(name)
-
-        if visibility == "Player" then
-            --[[
-                A per-player channel has no single "current value", so it is not retained
-                server-side -- retaining it would let one player's state be read as everyone's
-                by the next thing that calls `Peek`. It is addressed and sent, and the
-                receiving client retains its own copy.
-            ]]
-            if target == nil then
-                error(
-                    `[Unrest.Bridge] :Publish("{name}") is a Player channel and needs a target player. `
-                        .. "Publishing it to everyone is exactly the mistake the contract exists to prevent.",
-                    0
-                )
-            end
-        else
-            retain(name, value)
-        end
-
-        if visibility == "Server" then
-            return
-        end
-
-        --[[
-            The schema is the last thing between a value and the wire. A channel with no
-            `Value` spec is still checked against the plain-data whitelist, so an Instance --
-            a character Model, say -- cannot replicate even by accident.
-        ]]
-        local contract = Contracts:GetChannel(name)
-        local valid, detail = Validate.Value(if contract ~= nil then contract.Value else nil, value)
-        if not valid then
-            warn(`[Unrest.Bridge] refused to replicate "{name}": {detail}`)
-            -- Fail closed: the value stays local, the wire stays clean.
-            reject(name, "BadPayload", detail or "channel value failed validation")
-            return
-        end
-
-        local active = gateway
-        if active == nil then
-            return
-        end
-        local publish = active.Publish
-        if publish == nil then
-            return
-        end
-        publish(active, name, value, target)
+        local entry = channelFor(name)
+        entry.Value = value
+        entry.HasValue = true
+        entry.Signal:Fire(value)
     end
 
     function bridge:Subscribe(channel: string, handler: (value: any) -> ()): Types.Connection
@@ -274,6 +108,13 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
 
         local entry = channelFor(name)
         local connection = entry.Signal:Connect(handler)
+
+        --[[
+            The retained value is delivered on a new thread rather than inline. Subscribing
+            usually happens while an element is being adopted, and a handler that yields --
+            or throws -- must not stall adoption of the rest of the screen. The `Connected`
+            re-check covers a subscriber that disconnects in the same frame it subscribed.
+        ]]
         if entry.HasValue then
             local value = entry.Value
             task.spawn(function()
@@ -300,81 +141,31 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
         assertAlive("Dispatch")
         local name = assertName(command, "Dispatch", "command")
 
-        local contract = Contracts:GetCommand(name)
-        if contract == nil then
-            rejectLoudly(name, "UnknownCommand", "no contract declares this command; call Contracts:Declare first")
+        local registered = handlers[name]
+        if registered == nil or #registered == 0 then
             return
         end
 
-        if contract.Realm == context then
+        -- Snapshot: a handler is allowed to add or drop another handler mid-dispatch.
+        for _, handler in table.clone(registered) do
             --[[
-                Local dispatch. It skips the gateway, so the gateway's schema check would never
-                run -- and "no handler ever sees an unvalidated payload" is a guarantee worth
-                keeping absolute, including against server code with a typo in it.
+                Handler isolation. A button wired in Studio can reach any handler, and one
+                system throwing must not swallow the click for every other listener -- so
+                each runs under `xpcall` and the traceback is reported where it is useful.
+
+                The traceback lands in an upvalue rather than in `xpcall`'s second return,
+                because a `CommandHandler` returns nothing and so there is no second return
+                to put it in.
             ]]
-            local valid, detail = Validate.Payload(contract.Payload, payload)
-            if not valid then
-                rejectLoudly(name, "BadPayload", detail or "payload failed validation")
-                return
+            local failure: string? = nil
+            local ok = xpcall(handler, function(err: any): ()
+                failure = debug.traceback(tostring(err), 2)
+            end, payload)
+
+            if not ok then
+                warn(`[Unrest.Bridge] handler for "{name}" errored:\n{tostring(failure)}`)
             end
-            execute(name, { Player = nil, Context = context, Remote = false }, payload)
-            return
         end
-
-        if context == "Server" then
-            rejectLoudly(
-                name,
-                "WrongRealm",
-                "the server does not send commands to clients; replicate state on a channel instead"
-            )
-            return
-        end
-
-        local active = gateway
-        local send = if active ~= nil then active.Send else nil
-        if active == nil or send == nil then
-            rejectLoudly(name, "NoHandler", "the client gateway is not running")
-            return
-        end
-
-        send(active, name, payload, false)
-    end
-
-    function bridge:Invoke(command: string, payload: any): Types.InvokeResult
-        assertAlive("Invoke")
-        local name = assertName(command, "Invoke", "command")
-
-        local contract = Contracts:GetCommand(name)
-        if contract == nil then
-            return rejectLoudly(
-                name,
-                "UnknownCommand",
-                "no contract declares this command; call Contracts:Declare first"
-            )
-        end
-        if contract.Response ~= true then
-            return rejectLoudly(name, "ResponseNotAllowed", "the contract does not declare Response = true")
-        end
-
-        if contract.Realm == context then
-            local valid, detail = Validate.Payload(contract.Payload, payload)
-            if not valid then
-                return rejectLoudly(name, "BadPayload", detail or "payload failed validation")
-            end
-            return execute(name, { Player = nil, Context = context, Remote = false }, payload)
-        end
-
-        if context == "Server" then
-            return rejectLoudly(name, "WrongRealm", "the server never invokes a client")
-        end
-
-        local active = gateway
-        local send = if active ~= nil then active.Send else nil
-        if active == nil or send == nil then
-            return rejectLoudly(name, "NoHandler", "the client gateway is not running")
-        end
-
-        return send(active, name, payload, true)
     end
 
     function bridge:Handle(command: string, handler: Types.CommandHandler): Types.Connection
@@ -382,17 +173,6 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
         local name = assertName(command, "Handle", "command")
         if type(handler) ~= "function" then
             error(`[Unrest.Bridge] :Handle("{name}") expects a function, got {typeof(handler)}.`, 0)
-        end
-
-        -- Throws with the list of declared commands: a handler for a command no contract
-        -- mentions could never be reached, and silently accepting it would hide that.
-        local contract = Contracts:ExpectCommand(name)
-        if contract.Realm ~= context then
-            error(
-                `[Unrest.Bridge] :Handle("{name}") was called on the {context}, but its contract puts the handler `
-                    .. `on the {contract.Realm}. Move the registration, or change the contract's Realm.`,
-                0
-            )
         end
 
         local registered = handlers[name]
@@ -423,79 +203,6 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
     end
 
     --------------------------------------------------------------------------------
-    -- The network seam: `NetTypes.BridgeSeam`, not on `Types.Bridge` and not for user code
-    --------------------------------------------------------------------------------
-
-    function bridge:AttachGateway(installed: NetTypes.NetGateway?): ()
-        gateway = installed
-    end
-
-    --[[
-        Installs the transport both halves build from. `Unrest:UseTransport` is the door a
-        game uses; this is where the answer is kept.
-
-        Not on `NetTypes.BridgeSeam` for a mechanical reason worth stating so nobody "fixes"
-        it: the seam types live in `Net/Types`, `Net/Transport` requires `Net/Types`, and a
-        `Net/Types` that named a transport type would close that into a require cycle. The
-        server gateway reads these through a local structural type instead.
-    ]]
-    function bridge:UseTransport(provided: Transport.TransportProvider): ()
-        if typeof(provided) ~= "table" or typeof((provided :: any).Name) ~= "string" then
-            error("[Unrest.Bridge] :UseTransport expects a TransportProvider with a Name.", 0)
-        end
-        transport = provided
-
-        local half = netClient
-        if half ~= nil then
-            -- Throws if this client has already sent anything: half a transport is worse
-            -- than the wrong one, because only some of the traffic would move.
-            (half :: any):UseTransport(provided)
-        end
-    end
-
-    --- Whichever provider was installed, or nil to mean "the default". Read by the server
-    --- gateway when it starts, and by nothing else.
-    function bridge:TransportProvider(): Transport.TransportProvider?
-        return transport
-    end
-
-    --[[
-        Brings this realm's client half online. Called by `Unrest:Start()`, which is late
-        enough for a game to have installed a transport and early enough that the first click
-        on a button that was already on screen still lands. On the server this does nothing:
-        the server half is constructed by its own bootstrap.
-    ]]
-    function bridge:StartNetworking(): ()
-        local half = netClient
-        if half ~= nil then
-            half:Start()
-        end
-    end
-
-    function bridge:Execute(command: string, source: Types.CommandSource, payload: any): Types.InvokeResult
-        assertAlive("Execute")
-        return execute(command, source, payload)
-    end
-
-    function bridge:Receive(channel: string, value: any): ()
-        if destroyed then
-            return
-        end
-        -- Applied locally and never re-published: replicated state cannot bounce back.
-        retain(channel, value)
-    end
-
-    function bridge:Snapshot(): { [string]: any }
-        local snapshot: { [string]: any } = {}
-        for name, entry in channels do
-            if entry.HasValue then
-                snapshot[name] = entry.Value
-            end
-        end
-        return snapshot
-    end
-
-    --------------------------------------------------------------------------------
 
     function bridge:Destroy(): ()
         if destroyed then
@@ -503,38 +210,9 @@ function Bridge.new(context: Types.RuntimeContext, provider: Transport.Transport
         end
         destroyed = true
 
-        gateway = nil
         table.clear(channels)
         table.clear(handlers)
         lifetime:Destroy()
-        rejected:Destroy()
-    end
-
-    --[[
-        The client wires itself. `Unrest`'s composition root builds the Bridge with nothing but
-        a context, so if the client half were attached from outside, every client bootstrap
-        would have to remember to do it -- and forgetting would fail open, as a Dispatch that
-        quietly does nothing. Building it here means the client is networked by construction.
-
-        What is NOT done here is `client:Start()`, and the omission is the whole reason a
-        transport can be chosen at all. This constructor runs while `ReplicatedStorage.Unrest`
-        is still being required, before a game has had the chance to say a word; starting the
-        client here would build the default transport in that window and leave
-        `Unrest:UseTransport` with nothing to install. So the object is attached now and its
-        transport is built at the first of `Unrest:Start()` or the first dispatch.
-    ]]
-    if context == "Client" then
-        local seam = (bridge :: any) :: NetTypes.BridgeSeam
-        local client = NetClient.new(seam, transport)
-        netClient = client
-
-        lifetime:Add(client)
-        lifetime:Add(client.Refused:Connect(function(rejection: Types.Rejection)
-            -- One signal for "this request was refused", wherever the refusal happened.
-            rejected:Fire(rejection)
-        end))
-
-        seam:AttachGateway((client :: any) :: NetTypes.NetGateway)
     end
 
     return (bridge :: any) :: Types.Bridge
