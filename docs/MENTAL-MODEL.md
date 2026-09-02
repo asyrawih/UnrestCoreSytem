@@ -5,20 +5,20 @@ kepala, sisanya cuma detail.
 
 ## Satu kalimat
 
-**Framework ini memiliki kabel antara logika game dan UI yang lu buat tangan, dan tidak memiliki
-apa pun selain itu.**
+**Framework ini memiliki kabel antara logika game dan UI yang kamu buat tangan, dan tidak
+memiliki apa pun selain itu.**
 
-Dia tidak membuat UI. Dia tidak menyimpan state game lu. Dia tidak tahu game lu tentang apa. Dia
-mengurus satu hal: bagaimana sesuatu yang terjadi di logika sampai ke layar, dan bagaimana
+Dia tidak membuat UI. Dia tidak menyimpan state game-mu. Dia tidak tahu game-mu tentang apa.
+Dia mengurus satu hal: bagaimana sesuatu yang terjadi di logika sampai ke layar, dan bagaimana
 sesuatu yang ditekan pemain sampai ke logika, tanpa keduanya saling mengenal.
 
 ## Tiga kata benda
 
 Dibaca berurutan. Masing-masing satu tugas, dan tidak ada yang meminjam tugas tetangganya.
 
-**System** adalah sepotong logika game yang memiliki state. Dia hidup di server. Dia tidak pernah
-menyentuh Instance, tidak pernah tahu ada tombol, tidak pernah tahu ada layar. `MusicSystem` tahu
-lagu apa yang sedang berputar; dia tidak tahu ada label yang menampilkannya.
+**System** adalah sepotong logika game yang memiliki state. Dia hidup di server. Dia tidak
+pernah menyentuh Instance, tidak pernah tahu ada tombol, tidak pernah tahu ada layar. Sebuah
+sistem musik tahu lagu apa yang sedang berputar; dia tidak tahu ada label yang menampilkannya.
 
 **Bridge** adalah satu-satunya jalan antara System dan layar. Tidak ada jalan lain, dan itu
 disengaja. Kalau ada jalan kedua, dua sisi akan mulai saling mengenal, dan begitu itu terjadi
@@ -61,20 +61,21 @@ tempat.** Sudah terjadi tiga kali: grup yang diwarisi, tag yang menurun, dan pre
 diwarisi. Ketiganya bentuknya sama persis. Dua modul menghitung jawaban yang seharusnya identik,
 lalu salah satunya diperbaiki dan yang lain tidak.
 
-Jadi kalau lu menambah sesuatu ke framework ini, pertanyaan pertama bukan "di mana kodenya
+Jadi kalau kamu menambah sesuatu ke framework ini, pertanyaan pertama bukan "di mana kodenya
 ditaruh", tapi **"apakah ini menambah tempat kelima yang menjawab salah satu dari empat
 pertanyaan itu"**. Kalau iya, jangan.
 
 ## Empat hal yang framework ini bukan
 
-- **Bukan library UI.** Dia tidak akan pernah membuat GuiObject. Kalau lu ingin sesuatu digambar,
-  gambar di Studio.
-- **Bukan wadah state.** Channel itu papan pengumuman, bukan database. Yang memiliki state adalah
-  System.
-- **Bukan library jaringan.** Dia memiliki kebijakan siapa boleh memanggil apa; cara byte bergerak
-  itu urusan transport dan bisa diganti.
-- **Bukan game lu.** Ini yang paling gampang bocor, dan hari ini memang sedang bocor: masih ada
-  71 referensi ke Music dan Dance di dalam `src/shared`. Itu utang, bukan rancangan.
+- **Bukan library UI.** Dia tidak akan pernah membuat GuiObject. Kalau kamu ingin sesuatu
+  digambar, gambar di Studio.
+- **Bukan wadah state.** Channel itu papan pengumuman, bukan database. Yang memiliki state
+  adalah System.
+- **Bukan library jaringan.** Dia memiliki kebijakan siapa boleh memanggil apa; cara byte
+  bergerak itu urusan transport dan bisa diganti.
+- **Bukan game-mu.** Ini yang paling gampang bocor, dan dulu memang pernah bocor: nama-nama
+  Music dan Dance sempat hidup di dalam `src/shared`. Sekarang sudah tidak. Semuanya pindah ke
+  `src/game`, dan framework tidak lagi tahu apa-apa soal game mana pun.
 
 ## Aturan searah
 
@@ -89,6 +90,9 @@ Yang keempat bukan soal kerapian, melainkan keamanan. Gerbang yang memutuskan ap
 diminta client tinggal di `ServerScriptService`, sehingga mesin yang diaturnya tidak bisa
 membacanya. Kontraknya sendiri boleh dibaca siapa saja: itu daftar nama pintu, dan gemboknya ada
 di server.
+
+Dan ada aturan searah kelima, yang bentuknya sama: **kode game meng-`require` framework,
+framework tidak pernah meng-`require` kode game.**
 
 ## Kenapa tag, bukan kode
 
@@ -109,7 +113,7 @@ tangan.
 
 Atribut menyatakan satu perintah tetap. Begitu perilakunya bergantung pada keadaan sekarang,
 misalnya "putar kalau sedang diam, hentikan kalau sedang berbunyi", atribut sudah tidak cukup dan
-lu turun ke `Unrest:Query`.
+kamu turun ke `Unrest:Query`.
 
 Itu bukan kegagalan atribut, itu batas yang jelas. Dan karena peran sebuah elemen jatuh balik ke
 namanya, sering kali menamai elemen dengan benar sudah menggantikan atribut sepenuhnya.
@@ -117,11 +121,14 @@ namanya, sering kali menamai elemen dengan benar sudah menggantikan atribut sepe
 ## Urutan membaca
 
 1. Dokumen ini.
-2. `GETTING-STARTED.md` — delapan langkah, dari menandai elemen pertama sampai menambah perintah
-   sendiri.
-3. `ARCHITECTURE.md` — kontrak antar lapis, kalau lu akan menyunting framework-nya.
-4. `UI-BINDING.md` dan `REMOTE-SECURITY.md` — referensi, dibuka saat dibutuhkan, bukan dibaca
-   dari depan.
+2. [Panduan Memulai](GETTING-STARTED.md) — langkah demi langkah, dari folder kosong sampai
+   perintah pertama yang benar-benar terkirim.
+3. [ModuleScript `Game`](GAME-MODULE.md) — tempat kamu mendeklarasikan nama, kontrak, dan preset
+   milik game-mu.
+4. [Arsitektur](ARCHITECTURE.md) — kontrak antar lapis, kalau kamu akan menyunting
+   framework-nya.
+5. [Peta API](API-OVERVIEW.md) dan [Referensi UI](UI-BINDING.md) — referensi, dibuka saat
+   dibutuhkan, bukan dibaca dari depan.
 
-Dua berkas `PROPOSAL-*.md` adalah rancangan yang **belum dibangun**. Jangan membaca keduanya
-sebagai deskripsi kode yang ada.
+Dua berkas `PROPOSAL-*` adalah rancangan. Jangan membaca keduanya sebagai deskripsi kode yang
+ada.

@@ -1,94 +1,76 @@
----
-title: Start here / Mulai di sini
-sidebar_label: Start here / Mulai di sini
-description: How this documentation is organised — what describes real code, what is only a proposal, and which language each page is written in.
----
+# Mulai di sini
 
-# Start here / Mulai di sini
+UnrestCoreSystem adalah framework UI bergaya MVC untuk Roblox, ditulis dengan Luau.
 
-**EN** — UnrestCoreSystem is an MVC-style UI framework for Roblox, written in Luau. It
-**builds no UI**: it adopts UI you built by hand in Studio and opted in with the
-CollectionService tag `Unrest`.
+Satu kalimat yang menjelaskan sisanya: **framework ini tidak membuat UI.** Kamu yang
+menggambar UI-nya di Studio, lalu kamu tandai dengan tag CollectionService `Unrest`. Sejak
+detik itu framework mengurusnya — menyambungkan tombol ke perintah, dan label ke state.
 
-**ID** — UnrestCoreSystem adalah framework UI bergaya MVC untuk Roblox, ditulis dengan Luau.
-Dia **tidak membuat UI**: dia mengadopsi UI yang lu buat sendiri di Studio dan didaftarkan
-lewat tag CollectionService `Unrest`.
+Kalimat kedua yang sama pentingnya: **sebuah perintah tidak bisa dijangkau client kecuali
+kontraknya mengizinkan.** Menaruh atribut di Studio tidak memberi hak istimewa apa pun.
 
 ---
 
-## Two things to know before you read anything else
+## Kalau kamu baru pertama kali di sini
 
-### 1. This site mixes two languages, on purpose
+Baca berurutan. Empat halaman, dan setelah itu kamu sudah bisa kerja.
 
-The pages were written in the language their author chose, and nothing here has been
-translated. Every sidebar entry is tagged **EN** or **ID** so you know before you click.
+1. **[Model Mental](MENTAL-MODEL.md)** — halaman terpendek di sini. Tiga kata benda, dua kata
+   kerja, satu aturan searah.
+2. **[Panduan Memulai](GETTING-STARTED.md)** — langkah demi langkah, dari folder kosong sampai
+   tombol pertama yang benar-benar mengirim perintah. Halaman ini menjawab **"aku mulai nulis
+   script di mana?"** untuk sisi server dan sisi client.
+3. **[ModuleScript `Game`](GAME-MODULE.md)** — tempat kamu mendeklarasikan nama, kontrak, dan
+   preset milik game-mu. Ini satu-satunya berkas yang **wajib** kamu isi.
+4. **[Arsitektur](ARCHITECTURE.md)** — kontrak antar lapisan. Baca ini sebelum menyunting
+   framework-nya sendiri.
 
-Halaman-halaman di situs ini ditulis dalam bahasa yang dipilih penulisnya, dan tidak ada
-yang diterjemahkan. Setiap entri di sidebar diberi tanda **EN** atau **ID**.
+## Kalau kamu sudah kerja dan butuh jawaban
 
-| Page | Language | What it is |
-| --- | --- | --- |
-| [Model Mental](MENTAL-MODEL.md) | ID | The shortest page here, and the one to read first |
-| [Getting Started](GETTING-STARTED.md) | EN | Eight numbered steps, first tag to first command |
-| [Architecture](ARCHITECTURE.md) | EN | The contract between layers |
-| [UI Binding](UI-BINDING.md) | EN | Attribute reference, handler matrix, adapter coverage |
-| [Remote Security](REMOTE-SECURITY.md) | EN | Contract tables and the ordered rejection paths |
-| [Proposal — Controls](PROPOSAL-CONTROLS.md) | ID | **Proposal only. Not implemented.** |
-| [Proposal — Transport](PROPOSAL-TRANSPORT.md) | ID | **Proposal only. Not implemented.** |
-
-### 2. Two pages describe code that does not exist yet
-
-The **Proposals** section is design work, not documentation. `UnrestControl`, the transport
-interface, and everything else described there is **not in `src/`** and cannot be used. Those
-pages carry a status banner at the top; the rest of the site describes code that ships today.
-
-Bagian **Proposals** adalah rancangan, bukan dokumentasi. `UnrestControl` dan antarmuka
-transport yang dibahas di sana **belum ada di `src/`** dan belum bisa dipakai.
+| Butuh apa | Buka |
+| --- | --- |
+| Tanda tangan sebuah fungsi | [Peta API](API-OVERVIEW.md) |
+| Arti sebuah atribut `Unrest*` | [Referensi Atribut](UI-ATTRIBUTES.md) |
+| Kelas ini punya handler apa saja | [Kosakata Handler](UI-HANDLERS.md) dan [Cakupan Adapter](UI-ADAPTERS.md) |
+| Kenapa perintahku ditolak | [Keamanan Remote](REMOTE-SECURITY.md) |
+| Ada pesan galat merah di Output | [Pemecahan Masalah](TROUBLESHOOTING.md) |
 
 ---
 
-## Reading order / Urutan membaca
+## Tiga hal yang perlu kamu tahu tentang situs ini
 
-1. [Model Mental](MENTAL-MODEL.md) — three nouns, two verbs, and the one-way rule.
-2. [Getting Started](GETTING-STARTED.md) — from tagging your first element to adding a
-   command of your own.
-3. [Architecture](ARCHITECTURE.md) — read this before you edit the framework itself.
-4. [UI Binding](UI-BINDING.md) and [Remote Security](REMOTE-SECURITY.md) — reference material.
-   Open them when you need an answer, do not read them front to back.
+### 1. Semuanya bahasa Indonesia
 
----
+Nama kode tetap bahasa Inggris — `UnrestCommand`, `Bridge:Dispatch`,
+`ReplicatedStorage.Game`. Itu identifier, bukan kalimat, dan menerjemahkannya cuma bikin
+kodenya tidak ketemu.
 
-## About the examples
+### 2. Framework ini tidak tahu apa-apa soal game-mu
 
-Some pages name `MusicSystem`, `DanceSystem` or a `NowPlaying` channel. Those are **systems a
-game supplies**, used here as worked examples of the `Core` layer — they are not part of the
-framework's surface, and nothing in the framework depends on them existing.
+Dulu framework ini membawa contoh musik dan tarian di dalam dirinya sendiri. Sekarang tidak
+lagi. Tidak ada `MusicSystem`, tidak ada perintah `Music.Play`, tidak ada channel
+`NowPlaying` di dalam `src/shared`.
 
-Beberapa halaman menyebut `MusicSystem`, `DanceSystem`, atau channel `NowPlaying`. Itu
-**sistem milik game**, dipakai di sini sebagai contoh lapisan `Core` — bukan bagian dari
-permukaan framework.
+Nama-nama itu masih muncul di dokumentasi ini **sebagai contoh isi game**, karena repo ini
+memang berisi satu game contoh di `src/game`. Setiap kali kamu melihatnya, ingat: itu isi
+`src/game`, bukan permukaan framework. Framework hanya membawa kata-kata umum —
+`System`, `Contracts`, `Bridge`, `Descriptor`.
 
----
+### 3. Dua halaman menjelaskan kode yang belum ada
 
-## API reference
-
-The **API** tab is generated by Moonwave straight from the doc comments in `src/`. The
-comments are there, but they are not yet written in Moonwave's format (`@class`, `@within`,
-`@prop`, `@method`), so API generation is **switched off** for now — `npm run docs:dev` builds
-the guides only. `npm run docs:dev:api` turns it on and will start working the moment the
-source is annotated.
-
-Until then, the per-class tables in [UI Binding](UI-BINDING.md) and the contract tables in
-[Remote Security](REMOTE-SECURITY.md) are the reference.
-
-Tab **API** dihasilkan Moonwave langsung dari komentar di `src/`. Komentarnya sudah ada, tapi
-belum ditulis dalam format Moonwave, jadi pembuatan API **dimatikan** dulu.
+Kategori **Usulan** adalah rancangan, bukan dokumentasi. Isinya belum ada di `src/` dan belum
+bisa dipakai. Setiap halaman di sana membawa spanduk peringatan di atasnya.
 
 ---
 
-## Running this site locally
+## Menjalankan situs ini di komputermu
 
 ```sh
-npm install        # once
-npm run docs:dev   # http://localhost:3000/
+npm install         # sekali saja
+npm run docs:dev    # http://localhost:3000/
 ```
+
+Tab **API** yang dihasilkan otomatis oleh Moonwave masih dimatikan: komentar di `src/` belum
+ditulis dalam format Moonwave (`@class`, `@within`, `@prop`). Sampai itu dikerjakan, halaman
+**Referensi API** di sidebar inilah referensinya, dan halaman-halaman itu ditulis tangan
+langsung dari `src/shared/Types.luau`.

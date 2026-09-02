@@ -1,331 +1,428 @@
-# UnrestCoreSystem — Getting Started
+# Panduan Memulai
 
-Follow this once, in order, and you will have a screen that dispatches commands and follows
-server state. You should not need to read any framework source to finish it.
+Ikuti halaman ini sekali, berurutan, dan kamu akan punya satu layar yang mengirim perintah ke
+server dan satu label yang mengikuti state server. Kamu tidak perlu membaca satu baris pun
+kode framework untuk menyelesaikannya.
 
-Two facts explain everything below. **The framework builds no UI** — you build it in Studio
-and tag it. **A command is unreachable from a client unless its contract says so** — and an
-attribute is not a way around that.
-
-Assumed: you know Roblox Studio. Not assumed: anything about this framework.
+Yang diasumsikan: kamu sudah bisa memakai Roblox Studio. Yang tidak diasumsikan: apa pun
+tentang framework ini.
 
 ---
 
-## 1. Get the framework into a place
+## 0. Peta tempat: kode siapa taruh di mana
+
+Ini bagian yang paling sering bikin bingung, jadi kita selesaikan dulu sebelum menulis apa
+pun. Ada **lima folder**, dan hanya **tiga** yang boleh kamu sentuh.
+
+| Folder di disk | Muncul di DataModel sebagai | Punya siapa |
+| --- | --- | --- |
+| `src/shared` | `ReplicatedStorage.Unrest` | **framework** — jangan disentuh |
+| `src/server` | `ServerScriptService.Unrest` | **framework** — jangan disentuh |
+| `src/game` | `ReplicatedStorage.Game` | **kamu** — dibaca client *dan* server |
+| `src/game-server` | `ServerScriptService.Game` | **kamu** — hanya server |
+| `src/game-client` | `StarterPlayer.StarterPlayerScripts.Game` | **kamu** — hanya client |
+
+Cara mengingatnya cuma satu baris:
+
+> **`Unrest` itu framework. `Game` itu kamu.**
+
+Dua nama itu bersebelahan di DataModel, bukan bersarang. `ReplicatedStorage.Game` ada di
+*sebelah* `ReplicatedStorage.Unrest`, bukan di dalamnya. Itu disengaja, dan itu juga alasan
+kenapa aturan berikut bisa ditegakkan:
+
+> **Kode game meng-`require` framework. Framework tidak pernah meng-`require` kode game.**
+> Tidak ada satu berkas pun di `src/shared` atau `src/server` yang boleh menyebut
+> `ReplicatedStorage.Game`.
+
+Kalau kamu pernah tidak sengaja menghapus sesuatu di `Unrest` karena mengira itu punyamu:
+bukan salahmu, tata letaknya memang tidak menjelaskan dirinya sendiri. Sekarang sudah.
+
+Jawaban singkat untuk "aku mulai nulis script di mana":
+
+- **Sisi server** → `src/game-server/init.server.luau`
+- **Sisi client** → `src/game-client/init.client.luau`
+- **Yang dipakai keduanya** → `src/game/`
+
+---
+
+## 1. Hidupkan Rojo dan sambungkan ke Studio
 
 ```sh
-rokit install          # once per clone; Rokit shims refuse to run otherwise
-rojo serve             # serves default.project.json on port 34872
+rokit install     # sekali per clone; tanpa ini shim Rokit menolak jalan
+rojo serve        # menyajikan default.project.json di port 34872
 ```
 
-In Studio: **Plugins → Rojo → Connect**.
+Di Studio: **Plugins → Rojo → Connect**.
 
-**You should see** three things appear in the Explorer:
+**Yang seharusnya kamu lihat** di Explorer, lima hal, persis seperti tabel di bagian 0:
 
-| DataModel | From |
-| --- | --- |
-| `ReplicatedStorage.Unrest` | `src/shared` |
-| `ServerScriptService.UnrestServer` | `src/server` |
-| `StarterPlayer.StarterPlayerScripts.UnrestClient` | `src/client` |
+```
+ReplicatedStorage
+├── Unrest        ← framework
+└── Game          ← punyamu, dibaca dua sisi
 
-**If you do not**, you are connected to a different project or serving from a different
-directory — run `rojo serve` from the repository root, where `default.project.json` lives.
+ServerScriptService
+├── Unrest        ← framework
+└── Game          ← punyamu, server
 
-### Seed a worked example screen (optional, recommended)
+StarterPlayer/StarterPlayerScripts
+└── Game          ← punyamu, client
+```
 
-`studio/BuildUnrestUI.luau` builds a demo screen so you have something real to look at. It is
-**not** a Rojo mount and never becomes one — it is a one-off seed you run inside Studio.
-
-* **Command bar:** paste the whole file in, press Enter.
-* **Plugin:** drop the file in your Studio plugins folder for an **Unrest → Build UI** button.
-
-**You should see** `[BuildUnrestUI] built StarterGui.UnrestDemo. 9 tagged elements, 11
-attributes, ready for Play.` Everything it created is ordinary Studio instances that you now
-own: rename, restyle, delete. Re-running rebuilds it as a single undo step. The framework only
-ever reads the tag and the `Unrest*` attributes.
-
-> UI never goes into the Rojo tree — no `.rbxmx` for a ScreenGui, no `StarterGui` mount, no
-> `Instance.new("Frame")` in `src/`. If something seems to need UI in the repo, the answer is a
-> tag and some attributes on an instance a designer already built.
+**Kalau tidak muncul**, kemungkinan besar kamu menjalankan `rojo serve` dari folder lain.
+Jalankan dari akar repo, tempat `default.project.json` berada.
 
 ---
 
-## 2. Tag one element and press Play
+## 2. Tulis bootstrap server
 
-The smallest possible win: one tag, no attributes, no code.
-
-1. Insert a `ScreenGui` into `StarterGui` with a `TextButton` inside it (or use a seeded one).
-2. **View → Tag Editor**, select the button, add the tag `Unrest`.
-3. Press Play.
-
-**You should see** one line per adopted element from the diagnostics module:
-
-```
-[UnrestClient] adopted game.Players.You.PlayerGui.Menu.Play
-  [TextButton -> TextButton] role "Play": no wiring attributes -- adopted and queryable, nothing more
-```
-
-Read it left to right: the instance, its ClassName and the adapter that was resolved for it,
-its **role** (the `UnrestRole` attribute, or `Instance.Name` when there is none), its group if
-it has one, and then the attributes the framework *actually read* — which is the difference
-between "my attribute is wrong" and "my tag is missing".
-
-**If you see nothing**, after a few seconds you get
-`[UnrestClient] no instance is tagged "Unrest", so the framework is managing nothing.` — the tag
-is missing on the client's copy. Tag it in `StarterGui`, not in a running session's `PlayerGui`.
-
-Tagging is live in both directions: add the tag while playing and you get an `adopted` line
-immediately, remove it and you get a `released` line. Nothing restarts.
-
-Diagnostics is opt-in. When you are done wiring a screen, delete this one line from
-`src/client/init.client.luau` and nothing else changes:
+Buat berkas `src/game-server/init.server.luau`. Isinya empat baris yang penting, dan
+**urutannya bermakna**:
 
 ```luau
-require(script.Diagnostics)(unrest)
+--!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+require(ReplicatedStorage.Game)                  -- 1. deklarasi kontrak dan preset
+local Unrest = require(ReplicatedStorage.Unrest)
+Unrest:Register(require(script.Systems.Greeter)) -- 2. daftarkan sistem
+local unrest = Unrest:Start()                    -- 3. Init lalu Start
+unrest:OpenGateway()                             -- 4. remote muncul
 ```
 
----
+### Kenapa urutannya begitu
 
-## 3. Make the button do something — with no code
+Baca dari bawah, karena baris terakhir yang menjelaskan sisanya.
 
-Select the tagged `TextButton` and add two attributes in the Properties pane:
+**Baris 4 adalah saat pintu dibuka.** `OpenGateway` yang membuat objek remote muncul di
+DataModel. Sebelum baris itu jalan, tidak ada satu pun jalan bagi client untuk mengirim
+apa pun ke server — bukan karena ditolak, tapi karena remote-nya belum ada.
 
-| Attribute | Type | Value |
+Jadi meletakkannya **paling akhir** memberi jaminan yang enak: permintaan paling awal yang
+mungkin dikirim client pun pasti menemukan seluruh handler sudah terpasang. Tidak ada celah
+waktu di mana pintunya terbuka tapi ruangannya masih kosong.
+
+Sekarang baris-baris sebelumnya jadi masuk akal:
+
+| Baris | Yang terjadi | Kalau dilewat |
 | --- | --- | --- |
-| `UnrestCommand` | string | `Music.Play` |
-| `UnrestPayload` | string | `Lobby` |
+| 1. `require(ReplicatedStorage.Game)` | Setiap perintah dan channel didaftarkan ke registry framework. Meng-`require`-nya **adalah** pendaftarannya. | Framework gagal tertutup: setiap perintah ditolak `UnknownCommand`. Tidak berbahaya, cuma tidak jalan. |
+| 2. `Unrest:Register(...)` | Sistem masuk ke registry. Belum jalan, baru terdaftar. | Sistemnya tidak pernah hidup. |
+| 3. `Unrest:Start()` | `Init(unrest)` untuk semua sistem sesuai urutan dependensi, lalu `Start()` untuk semua sistem. Di sinilah `Bridge:Handle` dipanggil. | Tidak ada handler yang terpasang. |
+| 4. `unrest:OpenGateway()` | Remote dibuat. Client mulai bisa bicara. | Semua yang dikirim client tidak sampai. |
 
-Press Play. The adoption line now reads `UnrestCommand = Music.Play, UnrestPayload = Lobby`, and
-clicking the button asks the server's `MusicSystem` to play the Lobby track.
+Perhatikan bahwa `Bridge:Handle` biasanya dipanggil di dalam `Init` sebuah sistem. Karena
+`Start()` menjalankan semua `Init` sebelum baris 4, seluruh handler sudah pasti terdaftar
+saat pintu dibuka. Itu bukan kebetulan, itu alasan urutan ini dipilih.
 
-That attribute is exactly equivalent to writing:
+### Sistem paling kecil yang tetap jalan
+
+Buat `src/game-server/Systems/Greeter.luau`:
 
 ```luau
-unrest:Dispatch("Music.Play", "Lobby")
+--!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Game = require(ReplicatedStorage.Game)
+local UnrestTypes = require(ReplicatedStorage.Unrest.Types)
+
+local Greeter = {
+    Name = "Greeter",
+    Dependencies = {} :: { string },
+}
+
+function Greeter:Init(unrest: UnrestTypes.Unrest): ()
+    unrest.Bridge:Handle(Game.Commands.Greet, function(source, payload)
+        print(`halo, {source.Player and source.Player.Name or "server"}`)
+        return true
+    end)
+end
+
+return Greeter
 ```
 
-**An attribute grants no privilege.** It goes through the same `Bridge:Dispatch` as
-hand-written Luau; the contract in `Net/Contracts.luau` still decides what this client may
-ask for, the server still validates the payload, and the server still applies the rate limit.
-Type `Music.ForceStopAll` into `UnrestCommand` and it is refused with `NotClientCallable`,
-because that contract never sets `AllowClient = true`. See
-[REMOTE-SECURITY.md](REMOTE-SECURITY.md) for the command table.
+Dua hal yang wajib ada di sini dan mudah terlupa:
 
-Client-callable commands today: `Music.Play`, `Music.Stop`, `Music.SetVolume`, `Dance.Play`,
-`Dance.Stop`. `UnrestCommand` only means something on a class that can be activated —
-`TextButton`, `ImageButton`, `ClickDetector`, `ProximityPrompt`. On a `Frame` you get a warning
-naming the element and the fix, and the rest of the screen keeps working.
+* **`Name` wajib**, dan harus unik. Itu kunci registry-nya.
+* **`Dependencies` wajib ditulis walau kosong** — `{} :: { string }`. Tanpa itu type checker
+  strict tidak mengenali tabelmu sebagai `System`.
 
-Add `UnrestCooldown` (number, e.g. `0.25`) to stop a fat-fingered double click sending two
-dispatches. It is a client-side debounce and **advisory only** — the real limit is the
-per-player, per-command budget the server applies on arrival.
+`Init`, `Start`, dan `Destroy` semuanya opsional. Lihat [API Core](API-CORE.md) untuk
+siklus hidup lengkapnya.
 
 ---
 
-## 4. Make a label follow state — with no code
+## 3. Tulis bootstrap client
 
-Insert a `TextLabel`, tag it `Unrest`, and add:
+Buat berkas `src/game-client/init.client.luau`:
 
-| Attribute | Type | Value |
+```luau
+--!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+require(ReplicatedStorage.Game)                  -- 1. kontrak dan preset, sama persis
+local Unrest = require(ReplicatedStorage.Unrest)
+local unrest = Unrest:Start()                    -- 2. jaringan hidup, UI bertag diadopsi
+```
+
+Lebih pendek dari sisi server, dan bedanya cuma satu: **tidak ada `OpenGateway` di client.**
+Remote dibuat oleh server; client menunggunya. Membuka gerbang adalah tindakan yang hanya
+punya arti di sisi yang memegang gembok.
+
+Dua hal yang dilakukan `Unrest:Start()` di client:
+
+1. Menghidupkan setengah-client dari lapisan jaringan.
+2. **Mengadopsi UI.** Setiap instance bertag `Unrest` di `PlayerGui` mulai dikelola. Ini
+   hanya terjadi di client — di server, `Elements` ada tapi tidak mengadopsi apa pun.
+
+Kenapa client juga harus `require(ReplicatedStorage.Game)`? Karena Roblox menyimpan cache
+ModuleScript **per realm**. Server punya salinan registry-nya sendiri, client punya
+salinannya sendiri. Keduanya harus diberi tahu. Kalau client lupa, dia akan menolak mengirim
+perintah yang sebenarnya sah, dengan `UnknownCommand` di sisi client.
+
+---
+
+## 4. Deklarasikan perintah pertamamu
+
+Sekarang isi `src/game/`. Detail lengkapnya ada di halaman
+[ModuleScript `Game`](GAME-MODULE.md); di sini kita ambil versi paling ringkasnya.
+
+**`src/game/Names.luau`** — nama, dieja sekali saja:
+
+```luau
+--!strict
+return table.freeze({
+    Channels = table.freeze({
+        Greeting = "Greet.Last",
+    }),
+    Commands = table.freeze({
+        Greet = "Greet.Say",
+    }),
+})
+```
+
+**`src/game/Contracts.luau`** — kebijakannya. Ini yang menentukan apa yang boleh diminta
+client:
+
+```luau
+--!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
+local Names = require(script.Parent.Names)
+
+Contracts:Declare({
+    Name = Names.Commands.Greet,
+    Realm = "Server",
+    AllowClient = true,                    -- baris inilah yang membuka pintunya
+    Payload = { Kind = "string", MaxLength = 32 },
+    RateLimit = { Count = 2, Window = 1 },
+    Response = true,
+    Description = "Sapa pemanggilnya.",
+})
+
+Contracts:DeclareChannel({
+    Name = Names.Channels.Greeting,
+    Visibility = "Public",
+    Value = { Kind = "string", Optional = true, MaxLength = 64 },
+    Description = "Sapaan terakhir yang dikirim siapa pun.",
+})
+
+return table.freeze({})
+```
+
+**Menambah nama di `Names.luau` tidak memberi apa-apa.** Yang memberi izin adalah
+`AllowClient = true` di `Contracts.luau`. Hilangkan baris itu dan perintahnya tetap ada,
+tetap bisa dipakai kode server, tapi tidak bisa dijangkau client sama sekali. Ketiadaan
+izin **adalah** penolakannya — tidak ada `Private = true` yang harus kamu ingat menulis.
+
+---
+
+## 5. Tandai satu elemen, lalu tekan Play
+
+Kemenangan terkecil yang mungkin: satu tag, nol atribut, nol kode.
+
+1. Masukkan `ScreenGui` ke `StarterGui`, dan `TextButton` di dalamnya.
+2. **View → Tag Editor**, pilih tombolnya, tambahkan tag `Unrest`.
+3. Tekan Play.
+
+Tombol itu sekarang dikelola. Dia belum melakukan apa-apa, tapi dia sudah bisa ditemukan
+`Unrest:Query`, dan atribut apa pun yang kamu tambahkan padanya langsung terbaca.
+
+**Tag itu menurun.** Menandai `ScreenGui`-nya saja sudah cukup untuk mengelola setiap
+`GuiObject` di bawahnya. Satu layar diikutsertakan dengan satu tag pada wadahnya, bukan
+dengan empat puluh tag pada empat puluh tombol. Aturan lengkapnya ada di
+[Adopsi dan Tag](UI-ADOPTION.md).
+
+Penandaan bersifat langsung dua arah: tambahkan tag saat game berjalan dan elemennya
+diadopsi saat itu juga; cabut tagnya dan dia dilepas saat itu juga. Tidak ada yang perlu
+di-restart.
+
+---
+
+## 6. Buat tombolnya bekerja — tanpa kode
+
+Pilih `TextButton` yang tadi, tambahkan dua atribut di panel Properties:
+
+| Atribut | Tipe | Nilai |
 | --- | --- | --- |
-| `UnrestChannel` | string | `Music.NowPlaying` |
+| `UnrestCommand` | string | `Greet.Say` |
+| `UnrestPayload` | string | `Halo` |
+
+Tekan Play, klik tombolnya. Handler `Greeter` di server jalan.
+
+Atribut itu persis sama artinya dengan menulis:
+
+```luau
+unrest:Dispatch("Greet.Say", "Halo")
+```
+
+**Atribut tidak memberi hak istimewa.** Dia lewat `Bridge:Dispatch` yang sama dengan Luau
+tulisan tangan. Kontraknya tetap yang memutuskan, server tetap memvalidasi payload, server
+tetap menerapkan batas laju. Ketik nama perintah yang tidak `AllowClient` ke dalam
+`UnrestCommand` dan hasilnya `NotClientCallable` — sama persis seperti kalau kamu menulisnya
+di kode.
+
+`UnrestCommand` hanya berarti pada kelas yang bisa diaktifkan: `TextButton`, `ImageButton`,
+`ClickDetector`, `ProximityPrompt`. Pada `Frame` kamu dapat peringatan yang menyebut nama
+elemennya, dan sisa layarnya tetap jalan.
+
+---
+
+## 7. Buat label mengikuti state — tanpa kode
+
+Sisipkan `TextLabel`, tandai `Unrest`, lalu tambahkan:
+
+| Atribut | Tipe | Nilai |
+| --- | --- | --- |
+| `UnrestChannel` | string | `Greet.Last` |
 | `UnrestBind` | string | `Text` |
-| `UnrestFormat` | string | `Now playing: {value}` |
+| `UnrestFormat` | string | `Terakhir: {value}` |
 
-Press Play. The label already shows the current track before you touch anything, because
-channels are **retained**: the server published it at start-up and a late subscriber still gets
-the last value. Click your button from step 3 and it follows. Adoption order
-never matters — the label paints correctly whether the music started an hour ago or starts an
-hour from now.
+Lalu di handler server, terbitkan nilainya:
 
-* `UnrestBind` can be omitted when the class has one obvious value: `TextLabel` writes `Text`,
-  `ImageLabel` writes `Image`, `ScrollingFrame` writes `CanvasPosition`.
-* Without `UnrestFormat` the value is written raw, which is how you drive a `Color3`, a `UDim2`
-  or a `boolean` from a channel. With a format the result is always a string, and `nil` renders
-  as empty rather than as the word `nil`.
-* `UnrestBind` is an allowlist per class: `UnrestBind = "Parent"` warns rather than writing
-  anything, because a value that can arrive from the server never sets an arbitrary property.
+```luau
+unrest.Bridge:Publish(Game.Channels.Greeting, payload)
+```
 
-Channels available today: `Music.NowPlaying`, `Music.Volume`, `Dance.Current`,
-`Avatar.Character`. (`Plugin.Registered` is server-only and never replicates.) The per-class
-bindable property tables are in [UI-BINDING.md](UI-BINDING.md).
+Tekan Play. Labelnya langsung benar, bahkan kalau dia baru diadopsi jauh setelah nilainya
+diterbitkan. Sebabnya: **channel itu ditahan (retained)**. Pelanggan yang datang belakangan
+tetap menerima nilai terakhir. Urutan berhenti jadi masalah.
 
----
-
-## 5. Collapse the repetition — `UnrestPreset` and `UnrestGroup`
-
-Steps 3 and 4 do not scale: three attributes on every label, two on every button, plus a group
-on each, is a lot of chances to typo `Music.NowPlaying`.
-
-**A preset is a named bundle.** Replace the three attributes on your label with one:
-
-| Attribute | Value |
-| --- | --- |
-| `UnrestPreset` | `NowPlayingLabel` |
-
-Declared presets (`src/shared/Presets.luau`): `DanceButton`, `DanceStop`, `MusicStop`,
-`MusicToggle`, `NowPlayingLabel`, `VolumeButton`.
-
-A preset is a **default, never an override**, so the one thing that differs stays on the
-element. Two volume buttons:
-
-| Element | Attributes |
-| --- | --- |
-| `VolumeDown` | `UnrestPreset = VolumeButton`, `UnrestPayload = 0.2` |
-| `VolumeUp` | `UnrestPreset = VolumeButton`, `UnrestPayload = 0.8` |
-
-**A group is written once.** Set `UnrestGroup = "MainMenu"` on the **ScreenGui**. Every tagged
-descendant inherits it, and `unrest:Query({ Group = "MainMenu" })` selects the lot.
-
-The seed screen is the before-and-after. Nine elements:
-
-| | Attributes |
-| --- | --- |
-| Before | **32** — command, payload, channel, bind, format and group retyped per element |
-| After | **11** — one `UnrestGroup` on the ScreenGui, a preset name per element, and a payload where two buttons differ |
-
-Two of the nine elements now carry no attributes at all: one is tagged purely so a group query
-can count it, and one is bound from code (step 6).
-
-Three rules govern this, and they are the whole model:
-
-1. **Exactly three attributes are inherited** — `UnrestGroup`, `UnrestCooldown`, `UnrestPreset`.
-   Inherit context, never intent: an inherited `UnrestCommand` would arm every descendant of a panel.
-2. **Most specific wins** — the element's own attribute beats its preset, which beats the ancestor's.
-3. **The walk stops at the first `LayerCollector`**, whose own attributes are read before it
-   stops. A screen is the widest thing an inherited value is allowed to mean.
+* `UnrestBind` boleh dihilangkan kalau kelasnya punya satu nilai yang jelas. `TextLabel`
+  menulis `Text`, `ImageLabel` menulis `Image`, `ScrollingFrame` menulis `CanvasPosition`.
+* Tanpa `UnrestFormat`, nilainya ditulis mentah. Itulah cara menggerakkan `Color3`, `UDim2`,
+  atau `boolean` dari sebuah channel. Dengan format, hasilnya selalu string, dan `nil`
+  menjadi kosong, bukan tulisan `nil`.
+* `UnrestBind` adalah **daftar-izin per kelas**. `UnrestBind = "Parent"` cuma memberi
+  peringatan, tidak menulis apa pun — nilai yang bisa datang dari server tidak boleh menulis
+  properti sembarangan.
 
 ---
 
-## 6. When to stop using attributes
+## 8. Kurangi pengulangan — `UnrestPreset` dan `UnrestGroup`
 
-`UnrestCommand` is *one fixed command*. The moment the right command depends on what is
-currently true, you need code. That is what `Unrest:Query` is for:
+Langkah 6 dan 7 tidak berskala. Tiga atribut di setiap label dan dua di setiap tombol berarti
+banyak kesempatan salah ketik.
+
+**Preset adalah bundel bernama.** Daftarkan di `src/game/Presets.luau`:
+
+```luau
+Presets.Register("GreetingLabel", {
+    [ATTRIBUTES.Channel] = CHANNELS.Greeting,
+    [ATTRIBUTES.Bind] = "Text",
+    [ATTRIBUTES.Format] = "Terakhir: {value}",
+})
+```
+
+Lalu di Studio, ganti tiga atribut tadi dengan satu:
+
+| Atribut | Nilai |
+| --- | --- |
+| `UnrestPreset` | `GreetingLabel` |
+
+**Preset adalah nilai bawaan, bukan penimpa.** Satu hal yang berbeda tetap ditulis di
+elemennya sendiri, dan yang ditulis di elemen selalu menang.
+
+**Grup ditulis sekali.** Set `UnrestGroup = "MenuUtama"` di **ScreenGui**-nya. Setiap
+keturunan yang dikelola mewarisinya, dan `unrest:Query({ Group = "MenuUtama" })` memilih
+semuanya sekaligus.
+
+Tiga aturan yang mengatur ini, dan hanya tiga:
+
+1. **Hanya tiga atribut yang diwariskan** — `UnrestGroup`, `UnrestCooldown`, `UnrestPreset`.
+   Yang diwariskan adalah konteks, tidak pernah niat. `UnrestCommand` yang diwariskan akan
+   diam-diam mempersenjatai setiap keturunan sebuah panel.
+2. **Yang paling spesifik menang** — atribut elemen sendiri mengalahkan presetnya, dan
+   presetnya mengalahkan leluhurnya.
+3. **Penelusuran berhenti di `LayerCollector` pertama** (`ScreenGui`, `SurfaceGui`,
+   `BillboardGui`), setelah membaca atributnya sendiri. Satu layar adalah cakupan terluas
+   yang boleh dimiliki sebuah nilai warisan.
+
+Detailnya di [Referensi Atribut](UI-ATTRIBUTES.md).
+
+---
+
+## 9. Kapan berhenti memakai atribut
+
+`UnrestCommand` menyatakan **satu perintah tetap**. Begitu perintah yang benar bergantung
+pada keadaan sekarang, atribut sudah tidak cukup. Di situlah `Unrest:Query` masuk — dan di
+situlah kamu mulai menulis kode client di `src/game-client/`.
 
 ```luau
 unrest:Query({
     Tag = unrest.Tag,
-    Selector = "GuiButton", -- is:A("GuiButton") -- TextButton and ImageButton both
+    Selector = "GuiButton",   -- is:A("GuiButton") -- TextButton dan ImageButton
     Role = "ToggleMenu",
 }, {
-    Active = function()
-        local playing = unrest.Bridge:Peek("Music.NowPlaying")
-        if playing == nil then
-            unrest:Dispatch("Music.Play", "Lobby")
+    Active = function(element)
+        if unrest.Bridge:Peek(Game.Channels.Greeting) == nil then
+            unrest:Dispatch(Game.Commands.Greet, "Halo")
         else
-            unrest:Dispatch("Music.Stop", nil)
+            unrest:Dispatch(Game.Commands.Greet, "Dah")
         end
     end,
 })
 ```
 
-**`Role` falls back to `Instance.Name`.** A button simply named `ToggleMenu` matches that
-query with no attribute written at all — and if a designer later renames it to
-`Btn_04_final`, they set `UnrestRole = "ToggleMenu"` and it keeps matching. Naming an element
-well is usually cheaper than writing an attribute; prefer `Role` over `Name` in a descriptor
-for exactly that reason.
+**`Role` jatuh balik ke `Instance.Name`.** Tombol yang namanya `ToggleMenu` cocok dengan
+query itu tanpa satu atribut pun. Dan kalau desainer nanti menamainya ulang jadi
+`Btn_04_final`, dia cukup mengisi `UnrestRole = "ToggleMenu"` dan query-nya tetap cocok.
+Karena itu, dalam descriptor pilih `Role`, bukan `Name`.
 
-The query is a **live binding**, not a scan: create it before the element exists and an element
-tagged ten minutes from now is bound ten minutes from now. Its lifetime is yours — call
-`:Destroy()` on the handle when the screen it serves goes away.
+Query adalah **ikatan hidup**, bukan pemindaian sekali jalan. Buat query sebelum elemennya
+ada, dan elemen yang ditandai sepuluh menit lagi akan terikat sepuluh menit lagi. Umurnya
+milikmu: panggil `:Destroy()` pada handle-nya saat layar yang dilayaninya pergi.
 
-Handler names, the same for every class: `Active`, `Secondary`, `Press`, `Release`, `Hover`,
-`Unhover`, `Focus`, `Blur`, `Submit`, `Changed`, `Added`, `Removed`. Which ones a given class
-supports is in [UI-BINDING.md](UI-BINDING.md).
-
-> **Code raises; attributes warn.** Binding `Submit` from code to a `TextLabel` throws — it is
-> a bug in code you wrote. The same mistake typed into an attribute only warns, because it is
-> data typed by somebody who is not watching the Output window, and taking the screen down
-> would be worse.
+> **Kode melempar error; atribut cuma memperingatkan.** Mengikat `Submit` dari kode ke
+> `TextLabel` melempar error — itu bug di kode yang kamu tulis. Kesalahan yang sama yang
+> diketik sebagai atribut hanya memberi peringatan, karena atribut adalah data, biasanya
+> diketik orang yang tidak sedang melihat jendela Output, dan menjatuhkan seluruh layar
+> karena itu jauh lebih buruk.
 
 ---
 
-## 7. Add a command of your own
+## 10. Ganti transport-nya (opsional)
 
-Five edits, in this order. The first grants nothing on its own; the second is the one that
-decides what a client may ask for.
-
-**1. Name it once**, in `src/shared/Constants.luau` — `Commands.ShopBuy = "Shop.Buy"` and
-`Channels.ShopBalance = "Shop.Balance"`. Names live here so they are never spelled twice.
-
-**2. Declare the contract** in `src/shared/Net/Contracts.luau`. Leaving `AllowClient` out means
-no client can reach it, and that absence *is* the denial:
+Secara bawaan framework memakai remote Roblox biasa. Kalau kamu mau memakai ByteNet atau
+pustaka jaringan lain, pasang di antara `require` dan `:Start()`:
 
 ```luau
-[Constants.Commands.ShopBuy] = {
-    Name = Constants.Commands.ShopBuy,
-    Realm = "Server",
-    AllowClient = true,
-    Payload = IDENTIFIER,
-    RateLimit = { Count = 2, Window = 1 },
-    Response = true,
-    Description = "Buy a catalogue item by name.",
-},
+local Unrest = require(ReplicatedStorage.Unrest)
+Unrest:UseTransport(require(ReplicatedStorage.Game.Transport))
+local unrest = Unrest:Start()
 ```
 
-**3. Declare the channel** you will publish results on, in the same file. `Visibility` defaults
-to `Server`, so a channel a client should see has to say so:
-
-```luau
-[Constants.Channels.ShopBalance] = {
-    Name = Constants.Channels.ShopBalance,
-    Visibility = "Player",
-    Value = { Kind = "number", Min = 0 },
-    Description = "The receiving player's balance.",
-},
-```
-
-**4. Handle it** in a server system's `Init`, and publish the result:
-
-```luau
-function ShopSystem:Init(unrest: Types.Unrest): ()
-    local bridge = unrest.Bridge
-
-    self._maid:Add(bridge:Handle(Constants.Commands.ShopBuy, function(source: Types.CommandSource, payload: any): boolean
-        local player = source.Player
-        if player == nil then
-            return false -- a local server dispatch has no caller
-        end
-
-        local bought = self:Buy(player, payload :: string)
-        bridge:Publish(Constants.Channels.ShopBalance, self:BalanceOf(player), player)
-        return bought
-    end))
-end
-```
-
-`payload` needs no type check — the gateway already proved it against the contract's schema —
-and the caller is `source.Player`, straight from the transport, never a field in the payload.
-Register the system with `Unrest:Register(ShopSystem)` in `src/server/init.server.luau`, and
-declare `Dependencies = {} :: { string }` on the system table even when it is empty.
-
-**5. Point the UI at it.** `UnrestCommand = "Shop.Buy"` and `UnrestPayload = "Sword"` on a
-button; `UnrestChannel = "Shop.Balance"` and `UnrestFormat = "Coins: {value}"` on a label. No
-new client code — and if you write the same attributes twice, add a preset.
+Jendela waktunya nyata, bukan formalitas: memasangnya setelah `:Start()` akan melempar error,
+bukan diam-diam memindahkan separuh trafik. Lihat [API Transport](API-TRANSPORT.md).
 
 ---
 
-## 8. Troubleshooting
+## Selanjutnya
 
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| `no instance is tagged "Unrest"` after a few seconds | Nothing carries the tag on the client's copy | Tag the instance in `StarterGui` via **View → Tag Editor**. Tagging a `ScreenGui` does **not** adopt its children — each element you want managed is tagged itself |
-| Adopted, but the adoption line shows `no wiring attributes` | The attribute is misspelled, or it is on the wrong instance | Attribute names are case-sensitive and start with `Unrest`. `UnrestCommand`, `UnrestPayload`, `UnrestChannel`, `UnrestBind`, `UnrestFormat` and `UnrestRole` are **never inherited** — they must be on the element itself |
-| `"Music.ForceStopAll" refused (NotClientCallable)` | The contract does not set `AllowClient = true` | Use a client-callable command, or add the line in `Net/Contracts.luau` if a client genuinely should be able to ask. The mistake is the same whether it came from an attribute or from code |
-| Binding `Changed` from code throws | The class has no single value property — a `Frame` has none | Bind `Changed` to a class that has one (`TextLabel`, `TextButton`, `TextBox`, `ImageLabel`, `ScrollingFrame`, `UICorner`, `UIScale`), or drop the handler. The error names the class and lists what it does support |
-| `... is not a declared preset` | `UnrestPreset` is misspelled | The warning lists every declared preset. Fix the spelling, or add it with `Presets.Register(name, bundle)`. The element is still adopted, with its own attributes only |
-| `Query({ Group = ... })` matches nothing | Nothing on the chain sets `UnrestGroup`, the walk hits a `LayerCollector` before reaching it, or the elements are not tagged | Set `UnrestGroup` on the `ScreenGui` the elements actually live under, and tag each element. Inheriting a group does not adopt an untagged instance |
-| `sets UnrestBind = "X", which is not bindable` | The property is not on that class's allowlist | Use a property from the class's bindable table in [UI-BINDING.md](UI-BINDING.md), or register an adapter that permits it |
-| `sets UnrestChannel but there is nothing to write it into` | The class has no default value property | Add `UnrestBind = "<property>"` |
-| Label stays blank | The channel published `nil` and there is no format | Add `UnrestFormat` — no Roblox property accepts `nil`, so without a format there is nothing to write |
-| An attribute change does nothing | You changed it on an untagged or released instance | Changing an attribute on a managed element re-wires it live; changing an inheritable one on an ancestor re-wires every managed descendant. Neither needs a restart |
-
----
-
-## Where to go next
-
-* [UI-BINDING.md](UI-BINDING.md) — full attribute reference, every handler, and the per-class
-  table of supported events and bindable properties.
-* [REMOTE-SECURITY.md](REMOTE-SECURITY.md) — the contract table, the ordered rejection paths, and
-  what a payload may contain.
-* [ARCHITECTURE.md](ARCHITECTURE.md) — the layer contract, the Bridge, and the system lifecycle.
+* **[ModuleScript `Game`](GAME-MODULE.md)** — isi `src/game/` selengkapnya, dan apa yang
+  minimal harus kamu definisikan di sana.
+* **[Peta API](API-OVERVIEW.md)** — setiap fungsi framework, satu per satu.
+* **[Referensi UI](UI-BINDING.md)** — atribut, handler, dan kelas apa mendukung apa.
+* **[Keamanan Remote](REMOTE-SECURITY.md)** — jalur penolakan, berurutan.
+* **[Pemecahan Masalah](TROUBLESHOOTING.md)** — pesan galat dan artinya.

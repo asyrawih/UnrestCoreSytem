@@ -245,4 +245,15 @@ Keadaan sekarang:
 
 ## 12. Status
 
-Proposal. Belum ada kode.
+Dokumen ini ditulis sebagai proposal, dan dibiarkan utuh sebagai catatan rancangan.
+
+**Sebagian isinya sudah dibangun sejak dokumen ini ditulis.** Antarmuka transport ada di
+`src/shared/Net/Transport.luau`, `Unrest:UseTransport` ada di composition root, dan sebuah
+transport ByteNet milik game ada di `src/game/Transport.luau` bersama `src/game/Packets.luau`.
+
+Untuk keadaan yang sekarang benar-benar berjalan, baca [API Transport](API-TRANSPORT.md).
+Halaman ini tetap berguna untuk **alasan** di balik bentuknya — terutama bagian 4 tentang arah
+kendali, dan bagian 7 tentang kenapa skema kabel tidak menggantikan validasi kebijakan.
+
+Bagian yang belum dibangun: paket bertipe per perintah (Tahap 2 dan 3 di bagian 2), dan
+pemisahan-pemisahan lain yang dibahas di bagian 10.

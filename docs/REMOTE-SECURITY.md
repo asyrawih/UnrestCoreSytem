@@ -1,20 +1,20 @@
-# UnrestCoreSystem — Remote Security
+# Keamanan Remote
 
-> The Bridge is the framework's controller *and* its client/server boundary. This document is
-> the boundary half: what a client can reach, what it cannot, and why the "cannot" is a
-> property of the design rather than a check somebody remembered to write.
+> Bridge adalah controller framework **sekaligus** batas client/server. Halaman ini adalah
+> separuh yang batas: apa yang bisa dijangkau client, apa yang tidak, dan kenapa "tidak"-nya
+> adalah sifat rancangan, bukan pemeriksaan yang kebetulan diingat seseorang.
 
 ---
 
-## 1. The one idea
+## 1. Satu gagasan
 
-**A command is unreachable from a client unless its contract says otherwise, and the server
-decides that by reading the contract, never by reading the message.**
+**Sebuah perintah tidak bisa dijangkau client kecuali kontraknya mengizinkan, dan server
+memutuskan itu dengan membaca kontraknya — tidak pernah dengan membaca pesannya.**
 
-Every mechanism below is a consequence. The important half is the second clause: because the
-permission is looked up by *name* in a table the server owns, nothing a client sends can widen
-its own permissions — the permission was never in the message, and the envelope has nowhere to
-put one.
+Setiap mekanisme di bawah adalah konsekuensinya. Separuh yang penting adalah klausa kedua:
+karena izinnya dicari **berdasarkan nama** di sebuah tabel milik server, tidak ada yang bisa
+dikirim client untuk memperluas izinnya sendiri. Izinnya memang tidak pernah ada di dalam
+pesan, dan amplopnya tidak punya tempat untuk menaruhnya.
 
 ```
     CLIENT                                   |  SERVER
@@ -23,299 +23,332 @@ put one.
         |                                    |
         | contract.Realm == "Server"         |
         v                                    |
-  Net/Client.luau  -- advisory guard --------|-----------------------------.
-        |          (a convenience, not a control)                          |
-        | FireServer(command, payload)       |                             |
+  Net/Client.luau  -- penjaga anjuran -------|-----------------------------.
+        |          (kenyamanan, bukan kontrol)                             |
+        | kirim(command, payload)            |                             |
         `------------------------------------|--> Net/Server.luau          |
                                              |     1 UnknownCommand        |
-                                             |     2 NotClientCallable  <--' same test,
-                                             |     3 WrongRealm            this one counts
+                                             |     2 NotClientCallable  <--' uji yang sama,
+                                             |     3 WrongRealm            yang ini berarti
                                              |     4 ResponseNotAllowed
                                              |     5 RateLimited (global)
-                                             |     6 RateLimited (command)
+                                             |     6 RateLimited (perintah)
                                              |     7 BadPayload
                                              |     8 Unauthorized
                                              |          |
                                              |          v
-                                             |     Bridge:Execute -> handler (pcall)
+                                             |     Bridge:Execute -> handler (xpcall)
                                              |          |
                                              |          v
-                                             |     Bridge:Publish -> channel visibility
+                                             |     Bridge:Publish -> visibilitas channel
                                              |          |
     Bridge:Subscribe  <----- UnrestPublish --|----------'
 ```
 
 ---
 
-## 2. Where the files live, and why that is a security property
+## 2. Di mana berkasnya tinggal, dan kenapa itu sifat keamanan
 
-| File | Realm | Why there |
+| Berkas | Realm | Kenapa di situ |
 | --- | --- | --- |
-| `src/shared/Net/Types.luau` | ReplicatedStorage | Types only. |
-| `src/shared/Net/Contracts.luau` | ReplicatedStorage | **Public knowledge on purpose.** A list of door names and which have an outside handle. |
-| `src/shared/Net/Validate.luau` | ReplicatedStorage | Same schema walker both sides; it holds no policy. |
-| `src/shared/Net/init.luau` | ReplicatedStorage | Locates/creates the three remotes. The envelope shape. |
-| `src/shared/Net/Client.luau` | ReplicatedStorage | The Bridge must construct it on the client. |
-| `src/server/Net/Server.luau` | **ServerScriptService** | **The policy is never replicated to the machines it polices.** |
+| `src/shared/Net/Types.luau` | ReplicatedStorage | Tipe saja. |
+| `src/shared/Net/Contracts.luau` | ReplicatedStorage | **Pengetahuan publik, dengan sengaja.** Daftar nama pintu dan mana yang punya gagang di luar. |
+| `src/shared/Net/Validate.luau` | ReplicatedStorage | Penelusur skema yang sama untuk kedua sisi; dia tidak memegang kebijakan. |
+| `src/shared/Net/Transport.luau` | ReplicatedStorage | Antarmuka transport. Sepuluh metode, dan tidak memutuskan apa pun. |
+| `src/shared/Net/Client.luau` | ReplicatedStorage | Bridge harus bisa membangunnya di client. |
+| `src/server/Net/Server.luau` | **ServerScriptService** | **Kebijakannya tidak pernah direplikasi ke mesin yang diaturnya.** |
 
-A client can read the contract table. That is not a leak: knowing that `Music.ForceStopAll`
-exists and is server-only tells an attacker nothing they can act on, because the lock is in
-`src/server/Net/Server.luau`, which they never receive.
+Client bisa membaca tabel kontrak. Itu bukan kebocoran: mengetahui bahwa
+`Music.ForceStopAll` ada dan khusus server tidak memberi tahu penyerang apa pun yang bisa
+mereka lakukan, karena gemboknya ada di `src/server/Net/Server.luau`, yang tidak pernah
+mereka terima.
 
-The asymmetry in how the two gateways are attached follows from this. The client half is built
-by the Bridge's own constructor — so a client is networked *by construction* and a bootstrap
-cannot fail open by forgetting to wire it. The server half cannot be reached from
-ReplicatedStorage at all, so the server bootstrap attaches it explicitly through
-`NetTypes.BridgeSeam.AttachGateway`.
-
----
-
-## 3. The contract table
-
-### Commands
-
-| Command | Realm | Client-callable | Payload schema | Rate limit | Authorize | Response |
-| --- | --- | --- | --- | --- | --- | --- |
-| `Music.Play` | Server | **yes** | `string`, ≤64, `[%w_%-%.]+` | 4 / 1s | — | yes |
-| `Music.Stop` | Server | **yes** | *none* → `nil` only | 4 / 1s | — | no |
-| `Music.SetVolume` | Server | **yes** | `number`, 0…1 | 8 / 1s | — | no |
-| `Music.ForceStopAll` | Server | **no** | *none* → `nil` only | 10 / 1s (default) | — | no |
-| `Dance.Play` | Server | **yes** | `string`, ≤64, `[%w_%-%.]+` | 3 / 2s | living character | yes |
-| `Dance.Stop` | Server | **yes** | *none* → `nil` only | 3 / 2s | — | no |
-| `Plugin.Reload` | Server | **no** | *none* → `nil` only | 10 / 1s (default) | — | yes |
-
-Plus a **global budget of 60 requests per second per player**, across every command combined.
-
-The two server-only rows are worked examples, and what makes them examples is what is *not*
-written in them. There is no `Private = true`, no `Admin` flag, no guard clause. They are
-unreachable because nobody wrote `AllowClient = true`. Adding a name to `Constants.Commands`
-grants nothing; only a row in `Net/Contracts.luau` with that line does.
-
-`Music.SetVolume` deserves a note: volume is shared state, so one player's slider is heard by
-everyone. It is client-callable because the framework's demo needs a command that writes global
-state through the gate, and it is rate limited hard for that reason. A shipping game adds an
-`Authorize` there — see `Dance.Play` for the shape — and the point of the table is that doing
-so is a one-line change in one file, with no handler, UI, or transport code to touch.
-
-### Channels
-
-| Channel | Visibility | Value schema | Note |
-| --- | --- | --- | --- |
-| `Music.NowPlaying` | Public | `string?`, ≤64 | Shared by definition. |
-| `Music.Volume` | Public | `number`, 0…1 | Shared by definition. |
-| `Dance.Current` | Player | `string?`, ≤64 | Addressed to its owner. |
-| `Avatar.Character` | Player | `string?`, ≤64 | The character's **name**, never the Model. |
-| `Plugin.Registered` | **Server** | — | Declared with **no `Visibility` line at all.** |
-
-`Plugin.Registered` is the channel-side worked example: the safe answer is the one you get by
-not thinking about it. `Server` is the default, so a channel someone forgets to declare, or
-declares carelessly, does not replicate.
-
-`Avatar.Character` is the second one. `AvatarContext` holds the live character `Model` on the
-server, where a handle into the data model belongs, and publishes only the name. That is
-enforced twice: by the channel's `string?` schema, and — if the schema were removed — by the
-plain-data whitelist, which refuses any `Instance`. Flipping this channel to `Public` by
-accident produces a refusal in the server log, not a leak.
+Asimetri cara kedua gerbang dipasang mengikuti dari sini. Setengah-client dibangun oleh
+konstruktor Bridge sendiri — jadi sebuah client **terjaring secara konstruksi**, dan bootstrap
+tidak bisa gagal terbuka karena lupa menyambungkannya. Setengah-server tidak bisa dijangkau
+dari `ReplicatedStorage` sama sekali, jadi bootstrap server memasangnya secara eksplisit lewat
+`OpenGateway`.
 
 ---
 
-## 4. Rejection paths, in order
+## 3. Bentuk kontraknya
 
-`Net/Server.luau` refuses a request at the first line that says no. The order is not arbitrary.
+Framework **tidak mendeklarasikan satu perintah pun dan satu channel pun.** Registry-nya
+kosong sejak awal, dan registry kosong menolak segalanya. Nama-nama itu milik game, dan
+didaftarkan lewat `Contracts:Declare` — lihat [ModuleScript `Game`](GAME-MODULE.md) dan
+[API Contracts](API-CONTRACTS.md).
 
-| # | `RejectionReason` | Trigger |
+Jadi tabel di bawah menggambarkan **bentuk**, bukan isi bawaan.
+
+### Perintah
+
+| Field | Efeknya terhadap keamanan |
+| --- | --- |
+| `Realm` | Di mana handler-nya jalan. Perintah `"Server"` yang di-dispatch client diteruskan; perintah `"Client"` tidak pernah meninggalkan client. |
+| `AllowClient` | **Ini kontrolnya.** Absen atau `false` berarti tidak terjangkau client sama sekali. |
+| `Payload` | Skema. Perintah **tanpa** `Payload` menerima `nil` saja. |
+| `RateLimit` | Jatah per pemain. Bawaannya 10 per detik. |
+| `Authorize` | Gerbang terakhir, satu-satunya yang bisa melihat state game. |
+| `Response` | Apakah `Bridge:Invoke` diizinkan. |
+| `Wire` | Milik transport. Framework tidak pernah membacanya. |
+
+Contoh nyata dari game contoh di `src/game/Contracts.luau` — dua perintah yang **tidak** bisa
+dijangkau client:
+
+```luau
+Contracts:Declare({
+    Name = "Music.ForceStopAll",
+    Realm = "Server",
+    Description = "Perintah operator: senyapkan soundtrack.",
+})
+```
+
+Perhatikan apa yang **tidak** ditulis di situ. Tidak ada `AllowClient`. Tidak ada
+`Private = true`. Tidak ada klausa penjaga. Perintahnya tidak terjangkau karena **tidak ada
+yang menuliskan izinnya**. Kode server men-dispatch-nya sebebas perintah lain; client yang
+mengirim namanya dapat `NotClientCallable` dan tidak belajar apa pun.
+
+### Channel
+
+| `Visibility` | Sejauh mana nilainya merambat |
+| --- | --- |
+| `"Server"` | **Bawaan.** Tidak pernah meninggalkan server. |
+| `"Player"` | Direplikasi ke satu pemain yang disebut. Tidak ditahan di server. |
+| `"Public"` | Direplikasi ke setiap client. |
+
+Bawaan `Server` adalah contoh yang sama dari sisi channel: **jawaban yang aman adalah jawaban
+yang kamu dapat dengan tidak memikirkannya.** Channel yang lupa dideklarasikan, atau
+dideklarasikan asal-asalan, tidak direplikasi.
+
+Contoh kedua dari game contoh: sebuah channel yang membawa **nama** karakter, bukan
+karakternya. Skema `string?`-nya yang menegakkan itu — sebuah `Model` adalah `Instance`,
+`Instance` bukan data biasa, dan validasi menolaknya. Bahkan kalau skemanya dihapus, daftar-izin
+data biasa tetap menolaknya. Membalik channel itu jadi `Public` karena tidak sengaja
+menghasilkan penolakan di log server, bukan kebocoran.
+
+---
+
+## 4. Jalur penolakan, berurutan
+
+Gerbang server menolak permintaan di baris pertama yang berkata tidak. Urutannya tidak
+sembarangan.
+
+| # | `RejectionReason` | Pemicunya |
 | --- | --- | --- |
-| 1 | `UnknownCommand` | The envelope's first field is not a 1…128-character string, or no contract declares it. |
-| 2 | `NotClientCallable` | The contract does not set `AllowClient = true`. **This is the security control.** |
-| 3 | `WrongRealm` | The contract does not run this command on the server. |
-| 4 | `ResponseNotAllowed` | `Invoke` was used on a command with no `Response = true`. |
-| 5 | `RateLimited` | The player's **global** budget across all commands is spent. |
-| 6 | `RateLimited` | The player's budget for **this** command is spent. |
-| 7 | `BadPayload` | The payload does not satisfy the contract's `ArgumentSpec`. |
-| 8 | `Unauthorized` | The contract's `Authorize` hook said no — or threw, which also fails closed. |
-| 9 | `HandlerError` / `NoHandler` | The handler threw, or nothing is registered. Not the client's fault; not counted against them. |
+| 1 | `UnknownCommand` | Field pertama amplopnya bukan string 1…128 karakter, atau tidak ada kontrak yang mendeklarasikannya. |
+| 2 | `NotClientCallable` | Kontraknya tidak menulis `AllowClient = true`. **Ini kontrol keamanannya.** |
+| 3 | `WrongRealm` | Kontraknya tidak menjalankan perintah ini di server. |
+| 4 | `ResponseNotAllowed` | `Invoke` dipakai untuk perintah tanpa `Response = true`. |
+| 5 | `RateLimited` | Jatah **global** pemain itu, melintasi semua perintah, sudah habis. |
+| 6 | `RateLimited` | Jatah pemain itu untuk **perintah ini** sudah habis. |
+| 7 | `BadPayload` | Payload-nya tidak memenuhi `ArgumentSpec` kontraknya. |
+| 8 | `Unauthorized` | Kait `Authorize` berkata tidak — atau melempar error, yang juga gagal tertutup. |
+| 9 | `HandlerError` / `NoHandler` | Handler-nya error, atau tidak ada yang terdaftar. Bukan salah client; tidak dihitung terhadapnya. |
 
-Three of those orderings are load-bearing:
+Tiga urutan di antaranya menanggung beban:
 
-* **The client-callable test is second, before anything reads the payload.** A command a client
-  may not call is refused without its arguments ever being examined, so an unreachable
-  command's schema is not an attack surface.
-* **Rate limiting comes before schema validation.** Walking a deep table is the expensive part
-  of a request, and that expense should fall on the flood's own budget rather than on the
-  server's frame time.
-* **The global budget is checked before the per-command one.** Per-command limits alone can be
-  evaded by spreading a flood across many different cheap commands, each individually under its
-  own ceiling. The global bucket is what makes the sum bounded too.
+* **Uji client-callable ada di urutan kedua, sebelum apa pun membaca payload.** Perintah yang
+  tidak boleh dipanggil client ditolak tanpa argumennya pernah diperiksa, jadi skema sebuah
+  perintah yang tak terjangkau bukan permukaan serangan.
+* **Batas laju datang sebelum validasi skema.** Menelusuri tabel yang dalam adalah bagian
+  mahal dari sebuah permintaan, dan biaya itu harus jatuh ke jatah si banjir, bukan ke waktu
+  frame server.
+* **Jatah global diperiksa sebelum jatah per perintah.** Batas per perintah saja bisa
+  dihindari dengan menyebarkan banjir ke banyak perintah murah, masing-masing masih di bawah
+  plafonnya sendiri. Ember global itulah yang membuat jumlahnya ikut terbatas.
 
-### What the caller learns
+### Apa yang dipelajari pemanggil
 
-The coarse `Reason`, and nothing else. Every `Detail` — the failing field, the `Authorize`
-hook's reason, a handler's traceback — is logged on the server and never crosses the wire. A
-client probing `Dance.Play` cannot tell "you are dead" from "you are not loaded" from "that
-emote is staff-only", so it cannot map the inside of the server by watching which lies fail
-differently.
+`Reason` yang kasar, dan tidak lebih. Setiap `Detail` — field yang gagal, alasan dari kait
+`Authorize`, traceback sebuah handler — dicatat di server dan tidak pernah menyeberang kabel.
 
-### The client's own refusals
+Client yang menyelidik sebuah perintah tidak bisa membedakan "kamu mati" dari "kamu belum
+dimuat" dari "itu khusus staf", jadi dia tidak bisa memetakan isi server dengan mengamati
+kebohongan mana yang gagal berbeda.
 
-`Net/Client.luau` runs the *identical* test before sending and fires `NetClient.Refused` when it
-fails. That refusal buys exactly two things: a loud signal at the keyboard when a programmer
-dispatches something the contract never opened, and no wasted remote traffic. It buys **zero**
-security — it runs on a machine the player owns and an exploiter simply deletes it. The server
-does not know, ask, or care whether it ran. If the two ever disagree, the server wins; if you
-have to delete one, delete the client's.
+### Penolakan milik client sendiri
+
+`Net/Client.luau` menjalankan uji yang **identik** sebelum mengirim, dan menyalakan
+`NetClient.Refused` saat gagal.
+
+Penolakan itu membeli persis dua hal: **sinyal yang berisik di depan keyboard** saat seorang
+programmer men-dispatch sesuatu yang kontraknya tidak pernah buka, dan **tidak ada trafik
+remote yang terbuang**.
+
+Dia membeli **nol** keamanan. Dia berjalan di mesin yang dimiliki pemain, dan seorang
+exploiter tinggal menghapusnya. Server tidak tahu, tidak bertanya, dan tidak peduli apakah dia
+berjalan. Kalau keduanya berselisih, server yang menang; kalau salah satunya harus dihapus,
+hapus yang di client.
 
 ---
 
-## 5. Payload validation
+## 5. Validasi payload
 
-`Net/Validate.luau` is a **whitelist**. A value is refused unless it is one of:
+`Net/Validate.luau` adalah **daftar-izin**. Sebuah nilai ditolak kecuali dia salah satu dari:
 
 ```
 nil   boolean   number   string   table   Vector3   Color3   EnumItem
 ```
 
-Everything else is refused without being inspected — `Instance`, function, thread, userdata, a
-table with a metatable, a table that points at itself. Each of those is a specific hazard rather
-than a stylistic objection: an `Instance` is a live reference a handler might write through; a
-metatable turns `payload.Anything` into attacker-chosen code; a cyclic table turns any recursive
-walk into a hang.
+Selebihnya ditolak tanpa diperiksa — `Instance`, fungsi, thread, userdata, tabel bermetatable,
+tabel yang menunjuk ke dirinya sendiri.
 
-Everything is also bounded, because the cost of checking is itself an attack surface
+Masing-masing adalah bahaya yang spesifik, bukan keberatan gaya penulisan:
+
+* `Instance` adalah referensi hidup yang mungkin ditulis handler.
+* Metatable mengubah `payload.Apapun` jadi kode pilihan penyerang.
+* Tabel bersiklus mengubah setiap penelusuran rekursif jadi hang.
+
+Semuanya juga dibatasi, karena **biaya memeriksa itu sendiri adalah permukaan serangan**
 (`Constants.Limits`):
 
-| Limit | Value | Bounds |
+| Batas | Nilai | Yang dibatasi |
 | --- | --- | --- |
-| `MaxPayloadDepth` | 4 | Nesting, so the walk cannot be made deep. |
-| `MaxPayloadEntries` | 32 | Entries per table, so it cannot be made wide. |
-| `MaxStringLength` | 256 | Every string, including table keys. A contract's `MaxLength` can only be stricter. |
+| `MaxPayloadDepth` | 4 | Bersarang, supaya penelusurannya tidak bisa dibuat dalam. |
+| `MaxPayloadEntries` | 32 | Entri per tabel, supaya tidak bisa dibuat lebar. |
+| `MaxStringLength` | 256 | Setiap string, termasuk kunci tabel. `MaxLength` sebuah kontrak hanya bisa lebih ketat. |
 
-On top of the kind check, an `ArgumentSpec` may require: `Optional`, `MaxLength`, a `Pattern`
-that must match **in full**, numeric `Min`/`Max` (non-finite numbers — `NaN` and both
-infinities — are rejected before bounds are considered, because they sail through a naive
-comparison), `OneOf`, and recursive `Of` / `Fields`.
+Di atas pemeriksaan jenis, sebuah `ArgumentSpec` boleh menuntut: `Optional`, `MaxLength`,
+`Pattern` yang harus cocok **penuh**, `Min`/`Max` (angka non-finit — `NaN` dan kedua tak
+hingga — ditolak sebelum batasnya dipertimbangkan, karena mereka lolos begitu saja dari
+perbandingan yang naif), `OneOf`, serta `Of` dan `Fields` yang rekursif.
 
-Two rules there are deny-by-default restated one level down:
+Dua aturan di sana adalah "tolak secara bawaan" yang dinyatakan ulang satu tingkat lebih
+dalam:
 
-* A command with **no** `Payload` accepts `nil` and nothing else. A handler written against
-  `nil` can never be surprised by a table.
-* A schema with `Fields` **rejects undeclared fields** rather than ignoring them. An undeclared
-  field is not free space.
+* **Perintah tanpa `Payload` menerima `nil` dan tidak ada yang lain.** Handler yang ditulis
+  untuk `nil` tidak akan pernah dikejutkan sebuah tabel.
+* **Skema dengan `Fields` menolak field yang tidak dideklarasikan**, bukan mengabaikannya.
+  Field yang tidak dideklarasikan bukan ruang kosong yang gratis.
 
-Handler *return* values crossing back to a client get the same plain-data whitelist, so a
-handler cannot casually hand an `Instance` to a caller who asked for a boolean.
-
----
-
-## 6. Identity
-
-The player is **the first argument Roblox puts in the remote callback**, and nothing else is
-ever consulted:
-
-```luau
-created.Dispatch.OnServerEvent:Connect(function(player: Player, command: any, payload: any)
-    handle(player, command, payload, false)
-end)
-```
-
-It reaches a handler as `CommandSource.Player`. There is no `payload.Target`, no `payload.UserId`,
-no `payload.IsAdmin` — and, crucially, nowhere in the envelope to put one. "Play an emote on
-someone else's character" is not a request this framework validates carefully; it is a request it
-cannot represent. `CommandSource.Remote` tells a handler whether the request crossed the wire at
-all; handlers that mutate authoritative state branch on that, never on the payload.
+Nilai **kembalian** handler yang menyeberang balik ke client mendapat daftar-izin data biasa
+yang sama, jadi handler tidak bisa asal menyerahkan `Instance` ke pemanggil yang meminta
+boolean.
 
 ---
 
-## 7. Rate limiting
+## 6. Identitas
 
-A **token bucket** per player per command, plus one global bucket per player.
+Pemainnya adalah **argumen pertama yang ditaruh Roblox di callback remote**, dan tidak ada hal
+lain yang pernah dikonsultasikan.
 
-The choice over a sliding window of timestamps is itself a security property: a timestamp list
-grows with the flood that fills it, so rate-limiting an attacker would cost more the harder they
-attacked. A token bucket is two numbers, O(1) in time and space no matter what arrives.
+Dia sampai ke handler sebagai `CommandSource.Player`. Tidak ada `payload.Target`, tidak ada
+`payload.UserId`, tidak ada `payload.IsAdmin` — dan, yang paling penting, **tidak ada tempat
+di amplopnya untuk menaruh satu pun**.
 
-A player's buckets and rejection counter are deleted on `PlayerRemoving`, so the state table
-cannot grow for the life of the server — a join/leave loop is not a memory leak.
+"Mainkan emote di karakter orang lain" bukan permintaan yang divalidasi framework ini dengan
+hati-hati; itu permintaan yang **tidak bisa dia representasikan**.
 
----
+`CommandSource.Remote` memberi tahu handler apakah permintaan ini menyeberang kabel sama
+sekali. Handler yang mengubah state otoritatif bercabang pada itu, **tidak pernah** pada
+payload.
 
-## 8. Abuse reporting, not vigilantism
-
-Rejections are counted per player. Past `Constants.Limits.AbuseThreshold` (25), and every 25
-after that, `NetServer.AbuseDetected` fires with the player and the count. The framework then
-does nothing.
-
-Kicking on a heuristic bans the player with the bad connection and the one whose button
-double-fired. The framework does not know what a cheater is in your game; the signal is the seam
-where your moderation plugs in. `NetServer.Rejected` is the matching seam for telemetry.
-
-A `HandlerError` is explicitly *not* counted against the player. A crashing system must not be
-able to get its own users reported.
+Aturan yang sama berlaku ke transport: `player` datang dari pengetahuan transport sendiri
+tentang siapa yang mengirim. **Transport yang tidak bisa memastikan siapa pengirim sebuah
+pesan tidak boleh mengantarnya sama sekali.**
 
 ---
 
-## 9. Transport shape
+## 7. Batas laju
 
-Three replicated objects, and there are never more:
+Sebuah **token bucket** per pemain per perintah, ditambah satu ember global per pemain.
 
-| Object | Direction | Purpose |
+Pilihan ini di atas sliding window berisi daftar timestamp adalah sifat keamanan tersendiri:
+daftar timestamp **tumbuh bersama banjir yang mengisinya**, jadi membatasi laju seorang
+penyerang justru makin mahal makin keras dia menyerang. Token bucket cuma dua angka, O(1)
+dalam waktu dan ruang, apa pun yang datang.
+
+Ember dan penghitung penolakan seorang pemain dihapus saat `PlayerRemoving`, jadi tabel
+state-nya tidak bisa tumbuh seumur hidup server. Loop keluar-masuk bukan kebocoran memori.
+
+---
+
+## 8. Pelaporan penyalahgunaan, bukan main hakim sendiri
+
+Penolakan dihitung per pemain. Melewati `Constants.Limits.AbuseThreshold` (25), dan setiap 25
+setelahnya, `NetServer.AbuseDetected` menyala dengan pemain dan hitungannya. Setelah itu
+framework **tidak melakukan apa-apa**.
+
+Menendang berdasarkan heuristik akan menendang pemain dengan koneksi buruk dan pemain yang
+tombolnya kepencet dua kali. Framework tidak tahu apa itu "curang" di game-mu; sinyal itu
+adalah sambungan tempat sistem moderasi**mu** dipasang. `NetServer.Rejected` adalah sambungan
+yang sepadan untuk telemetri.
+
+`HandlerError` secara eksplisit **tidak** dihitung terhadap pemain. Sistem yang error tidak
+boleh bisa membuat penggunanya sendiri dilaporkan.
+
+---
+
+## 9. Bentuk transport
+
+Tiga objek tereplikasi, dan tidak pernah lebih:
+
+| Objek | Arah | Untuk apa |
 | --- | --- | --- |
-| `UnrestDispatch` (RemoteEvent) | client → server | Fire and forget. |
-| `UnrestInvoke` (RemoteFunction) | client → server | Request/response. |
-| `UnrestPublish` (RemoteEvent) | server → client | Channel replication. |
+| `UnrestDispatch` (`RemoteEvent`) | client → server | Kirim dan lupakan. |
+| `UnrestInvoke` (`RemoteFunction`) | client → server | Permintaan/balasan. |
+| `UnrestPublish` (`RemoteEvent`) | server → client | Replikasi channel. |
 
-One choke point per direction, not a remote per feature: there is exactly one function in the
-codebase that decides whether a request lives, so a new feature adds a row to a table rather than
-a door.
+Satu titik sempit per arah, bukan satu remote per fitur: ada persis **satu** fungsi di seluruh
+kode ini yang memutuskan apakah sebuah permintaan hidup, jadi fitur baru menambah baris di
+sebuah tabel, bukan menambah pintu.
 
-**The server never invokes a client.** `RemoteFunction:InvokeClient` hands a server thread to a
-machine the server does not control, with no timeout available to break it; a client that simply
-never returns stalls that thread forever. Server → client traffic is one-way `FireClient`.
+**Server tidak pernah meng-invoke client.** `RemoteFunction:InvokeClient` menyerahkan thread
+milik server ke mesin yang tidak dikendalikan server, tanpa timeout yang bisa memutusnya;
+client yang cukup dengan tidak pernah menjawab menggantung thread itu selamanya. Trafik
+server → client adalah `FireClient` satu arah.
 
-Correspondingly, the server never *commands* a client either — `Bridge:Dispatch` of a
-`Realm = "Client"` command from the server is a `WrongRealm` rejection, by design. The server
-cannot verify that a client complied, so a command pointed that way would be a suggestion dressed
-as a mechanism. Server → client is state on a channel, and the client decides what to render.
+Sejalan dengan itu, **server juga tidak pernah memerintah client**. `Bridge:Dispatch` untuk
+perintah `Realm = "Client"` dari server adalah penolakan `WrongRealm`, dengan sengaja. Server
+tidak bisa memverifikasi bahwa client menurut, jadi perintah ke arah itu cuma saran yang
+menyamar jadi mekanisme. Server → client adalah **state di sebuah channel**, dan client yang
+memutuskan apa yang digambar.
 
-The client's `Invoke` bounds itself with `Constants.Limits.InvokeTimeout` (10s) by racing the
-call against a `task.delay`, because `InvokeServer` has no timeout of its own. It never retries:
-an automatic retry on a timeout is how a struggling server gets a second copy of every request it
-is already late on.
+`Invoke` di client membatasi dirinya dengan `Constants.Limits.InvokeTimeout` (10 detik), dan
+**tidak pernah mencoba ulang**: percobaan ulang otomatis saat timeout adalah cara server yang
+sedang kepayahan mendapat salinan kedua dari setiap permintaan yang sudah telat dia kerjakan.
 
-The remotes are created **at the end** of the server bootstrap. That is the whole reason
-`gateway:Start()` is the last line: the door becomes reachable only once every handler is
-registered, so there is no window in which it is open and the room behind it is empty.
-
----
-
-## 10. Handler isolation
-
-Handlers run under `xpcall` inside `Bridge:Execute`. One bad system cannot stall the gateway for
-every other player. The traceback is captured and logged **on the server**, where it is useful;
-the caller receives `HandlerError` and nothing more.
-
-`Bridge:Execute` is deliberately gate-free — no validation, no rate limiting, no authorization —
-and it is deliberately **not** on `Types.Bridge`. It lives on `NetTypes.BridgeSeam`, which the
-server gateway casts to, so the only thing in the codebase that can reach an unchecked handler is
-the object that just finished checking.
+Transport bisa diganti sepenuhnya, tapi **antarmukanya searah**: transport menyerahkan
+permintaan mentah ke gerbang dan gerbang yang menjawab. Transport tidak pernah menjalankan
+handler, tidak pernah membaca kontrak, dan tidak pernah tahu apakah sebuah client boleh
+meminta hal yang baru saja dia antar. Lihat [API Transport](API-TRANSPORT.md).
 
 ---
 
-## 11. Threat model — what this does and does not stop
+## 10. Isolasi handler
 
-**Stopped:**
+Handler berjalan di dalam `xpcall`, di dalam `Bridge:Execute`. Satu sistem yang buruk tidak
+bisa menggantung gerbang untuk setiap pemain lain. Traceback-nya ditangkap dan dicatat **di
+server**, tempat dia berguna; pemanggil menerima `HandlerError` dan tidak lebih.
 
-- Calling a server-only command from a client, however the client is patched.
-- Forging identity: there is no field for it.
-- Sending a malformed, oversized, deeply nested, cyclic, or `Instance`-bearing payload.
-- Flooding one command, or many cheap commands, or joining and leaving to reset budgets.
-- Learning why a request failed beyond a coarse reason.
-- Leaking a `Server` channel by forgetting to think about it.
-- A crashing handler taking down the gateway or getting its own players reported.
+`Bridge:Execute` sengaja **tanpa gerbang** — tanpa validasi, tanpa batas laju, tanpa
+otorisasi — dan sengaja **tidak ada** di `Types.Bridge`. Dia tinggal di `NetTypes.BridgeSeam`,
+yang di-cast oleh gerbang server.
 
-**Not stopped, and out of scope:**
+Jadi satu-satunya benda di kode ini yang bisa menjangkau handler tanpa penjagaan adalah objek
+yang baru saja selesai menjaganya.
 
-- A client lying about *legitimate* input within its schema — `Dance.Play("Wave")` when the
-  player would rather not. Only an `Authorize` hook, which can see game state, can judge that.
-- Application-level logic errors inside a handler. The gate proves the shape, not the meaning.
-- Traffic analysis: contract names are public, so an attacker knows what exists. That is by
-  design; the locks are not in the same building as the map.
+---
+
+## 11. Model ancaman — apa yang dihentikan dan apa yang tidak
+
+**Dihentikan:**
+
+- Memanggil perintah khusus server dari client, bagaimanapun client-nya ditambal.
+- Memalsukan identitas: tidak ada field untuk itu.
+- Mengirim payload yang cacat bentuk, kebesaran, terlalu dalam, bersiklus, atau membawa
+  `Instance`.
+- Membanjiri satu perintah, atau banyak perintah murah, atau keluar-masuk untuk mereset
+  jatah.
+- Mempelajari **kenapa** sebuah permintaan gagal, di luar alasan yang kasar.
+- Membocorkan channel `Server` karena lupa memikirkannya.
+- Handler yang error menjatuhkan gerbang, atau membuat penggunanya sendiri dilaporkan.
+
+**Tidak dihentikan, dan memang di luar cakupan:**
+
+- Client yang berbohong tentang input yang **sah** di dalam skemanya. Hanya kait `Authorize`,
+  yang bisa melihat state game, yang bisa menilai itu.
+- Kesalahan logika tingkat aplikasi di dalam sebuah handler. Gerbang membuktikan bentuknya,
+  bukan maknanya.
+- Analisis trafik: nama kontrak bersifat publik, jadi penyerang tahu apa saja yang ada. Itu
+  memang rancangannya — gemboknya tidak berada di gedung yang sama dengan petanya.
