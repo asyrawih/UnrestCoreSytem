@@ -20,7 +20,8 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Game = require(ReplicatedStorage.Game)
+local GameTypes = require(ReplicatedStorage.Game.Types)
 local Maid = require(ReplicatedStorage.Unrest.Util.Maid)
 local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
 local Types = require(ReplicatedStorage.Unrest.Types)
@@ -47,7 +48,7 @@ local DanceSystem = {
     _order = {} :: { string },
     _animations = {} :: { [string]: Animation },
     _playing = {} :: { [Player]: Playing },
-    _avatar = nil :: Types.AvatarContext?,
+    _avatar = nil :: GameTypes.AvatarContext?,
     _bridge = nil :: Types.Bridge?,
     _maid = Maid.new(),
 }
@@ -116,7 +117,7 @@ function DanceSystem:_publish(player: Player): ()
     if bridge == nil then
         return
     end
-    bridge:Publish(Constants.Channels.Dance, self:GetCurrent(player), player)
+    bridge:Publish(Game.Channels.Dance, self:GetCurrent(player), player)
 end
 
 function DanceSystem:Stop(player: Player?): ()
@@ -180,7 +181,7 @@ end
 function DanceSystem:Init(unrest: Types.Unrest): ()
     local bridge = unrest.Bridge
     self._bridge = bridge
-    self._avatar = unrest:Get("AvatarContext") :: Types.AvatarContext
+    self._avatar = unrest:Get("AvatarContext") :: GameTypes.AvatarContext
 
     for name, animationId in DEFAULT_DANCES do
         self:AddDance(name, animationId)
@@ -192,11 +193,11 @@ function DanceSystem:Init(unrest: Types.Unrest): ()
         it is nil and `Play` returns false, which is the correct answer to "dance, on behalf of
         nobody".
     ]]
-    self._maid:Add(bridge:Handle(Constants.Commands.DancePlay, function(source: Types.CommandSource, payload: any)
+    self._maid:Add(bridge:Handle(Game.Commands.DancePlay, function(source: Types.CommandSource, payload: any)
         return self:Play(payload :: string, source.Player)
     end))
 
-    self._maid:Add(bridge:Handle(Constants.Commands.DanceStop, function(source: Types.CommandSource): ()
+    self._maid:Add(bridge:Handle(Game.Commands.DanceStop, function(source: Types.CommandSource): ()
         self:Stop(source.Player)
     end))
 end

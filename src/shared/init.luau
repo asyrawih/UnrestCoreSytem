@@ -28,7 +28,7 @@
             Selector = "TextButton", -- is:A("TextButton")
             Role = "ToggleMenu",
         }, {
-            Active = function(element) Unrest:Dispatch("Music.Play", "Lobby") end,
+            Active = function(element) Unrest:Dispatch("Example.Action", "Confirm") end,
             Hover = function(element) end,
         })
 ]]

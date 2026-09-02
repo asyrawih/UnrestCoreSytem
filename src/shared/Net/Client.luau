@@ -75,6 +75,16 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
         return { Ok = false, Value = nil, Reason = reason }
     end
 
+    --- Reads sensibly when the game has declared nothing yet, which is exactly the state
+    --- where an "unknown command" message is most likely to be the one somebody reads.
+    local function declared(): string
+        local names = Contracts:List()
+        if #names == 0 then
+            return "none"
+        end
+        return table.concat(names, ", ")
+    end
+
     --[[
         The advisory guard. It reads exactly the same contract table the server reads, asks
         exactly the same question, and its answer is worth exactly nothing to the server.
@@ -87,7 +97,10 @@ function Client.new(bridge: NetTypes.BridgeSeam): NetTypes.NetClient
 
         local contract = Contracts:GetCommand(name)
         if contract == nil then
-            return nil, "UnknownCommand", `"{name}" is not declared in Net/Contracts.luau`
+            return nil,
+                "UnknownCommand",
+                `"{name}" has no contract. Declare it with Contracts:Declare before dispatching it; `
+                    .. `currently declared: {declared()}`
         end
         if contract.Realm ~= "Server" then
             return nil,

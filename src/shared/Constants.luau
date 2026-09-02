@@ -2,8 +2,13 @@
 --[[
     Unrest / Constants
 
-    Stringly-typed values more than one layer needs. A channel or attribute name is never
-    spelled twice, so a typo is a nil index rather than a silent no-op.
+    Stringly-typed values more than one layer needs, and nothing a game names. An attribute
+    or remote name is never spelled twice here, so a typo is a nil index rather than a silent
+    no-op.
+
+    Command and channel names are deliberately absent. They belong to the game, which
+    registers them with `Contracts:Declare` and keeps its own names wherever it likes; the
+    framework only ever handles them as opaque strings.
 ]]
 
 local Constants = {
@@ -50,7 +55,7 @@ local Constants = {
         --- Property the channel value is written into ("Text", "Visible", ...). Must be
         --- declared `Bindable` by the element's adapter.
         Bind = "UnrestBind",
-        --- Format string applied to the channel value, e.g. "Music: {value}".
+        --- Format string applied to the channel value, e.g. "Status: {value}".
         Format = "UnrestFormat",
         --- Seconds of client-side debounce between activations. Advisory only: the server
         --- rate limit is the real one.
@@ -93,27 +98,6 @@ local Constants = {
         Invoke = "UnrestInvoke",
         --- Server -> client, channel replication.
         Publish = "UnrestPublish",
-    }),
-
-    --- Core -> UI. Retained state; a subscriber immediately receives the last value.
-    Channels = table.freeze({
-        NowPlaying = "Music.NowPlaying",
-        MusicVolume = "Music.Volume",
-        Character = "Avatar.Character",
-        Dance = "Dance.Current",
-        Plugins = "Plugin.Registered",
-    }),
-
-    --- UI -> Core. Intents. Every one of these is declared in `Net/Contracts.luau`,
-    --- which decides whether a client may ask for it at all.
-    Commands = table.freeze({
-        MusicPlay = "Music.Play",
-        MusicStop = "Music.Stop",
-        MusicSetVolume = "Music.SetVolume",
-        MusicForceStopAll = "Music.ForceStopAll",
-        DancePlay = "Dance.Play",
-        DanceStop = "Dance.Stop",
-        PluginReload = "Plugin.Reload",
     }),
 
     --[[

@@ -25,7 +25,7 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Game = require(ReplicatedStorage.Game)
 local Maid = require(ReplicatedStorage.Unrest.Util.Maid)
 local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
 local Types = require(ReplicatedStorage.Unrest.Types)
@@ -90,7 +90,7 @@ function AvatarContext:_publish(player: Player): ()
     end
 
     local character = self._characters[player]
-    bridge:Publish(Constants.Channels.Character, if character ~= nil then character.Name else nil, player)
+    bridge:Publish(Game.Channels.Character, if character ~= nil then character.Name else nil, player)
 end
 
 function AvatarContext:_bindCharacter(player: Player, character: Model): ()

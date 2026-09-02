@@ -16,6 +16,11 @@
 
     Core never touches an Instance. Adopted UI never touches a system. Everything crosses
     at the Bridge, and the Bridge asks the contracts what is allowed.
+
+    NO GAME SHAPES LIVE HERE. `System` is the extension point and `Core:Register` is the
+    door; a game exports the type of each system it writes from that system's own module,
+    the same way it names its own commands. The framework is not supposed to know what a
+    game's systems are called, so it does not carry their types.
 ]]
 
 local AdapterTypes = require(script.Parent.Adapters.Types)
@@ -57,6 +62,7 @@ export type CommandHandler = NetTypes.CommandHandler
 export type CommandContract = NetTypes.CommandContract
 export type ChannelVisibility = NetTypes.ChannelVisibility
 export type ChannelContract = NetTypes.ChannelContract
+export type ChannelDeclaration = NetTypes.ChannelDeclaration
 export type Contracts = NetTypes.Contracts
 export type RejectionReason = NetTypes.RejectionReason
 export type Rejection = NetTypes.Rejection
@@ -74,8 +80,9 @@ export type NetClient = NetTypes.NetClient
       2. every system's `Start()` runs, in the same order;
       3. `Destroy()` runs in reverse order on shutdown.
 
-    The teardown hook is `Destroy`, not `Stop`, so it never collides with a domain verb:
-    `MusicSystem:Stop()` stops the music, `MusicSystem:Destroy()` retires the system.
+    The teardown hook is `Destroy`, not `Stop`, so it never collides with a domain verb: a
+    system's own `:Stop()` can mean whatever that system does, while `:Destroy()` always
+    means the framework is retiring it.
 
     A system table must declare `Dependencies` even when empty (`{} :: { string }`) for the
     strict checker to match it structurally.
@@ -100,53 +107,6 @@ export type Core = {
     Start: (self: Core, unrest: Unrest) -> (),
     Stop: (self: Core) -> (),
     IsStarted: (self: Core) -> boolean,
-}
-
---------------------------------------------------------------------------------
--- Built-in system shapes
---------------------------------------------------------------------------------
-
-export type Track = {
-    Name: string,
-    SoundId: string,
-    Volume: number?,
-    Looped: boolean?,
-}
-
-export type MusicSystem = System & {
-    NowPlayingChanged: Signal<string?>,
-    AddTrack: (self: MusicSystem, track: Track) -> (),
-    Play: (self: MusicSystem, name: string) -> boolean,
-    Stop: (self: MusicSystem) -> (),
-    SetVolume: (self: MusicSystem, volume: number) -> (),
-    GetCurrent: (self: MusicSystem) -> string?,
-    List: (self: MusicSystem) -> { string },
-}
-
-export type AvatarContext = System & {
-    CharacterAdded: Signal<Player, Model>,
-    CharacterRemoving: Signal<Player, Model>,
-    Resolve: (self: AvatarContext, player: Player?) -> Player?,
-    GetCharacter: (self: AvatarContext, player: Player?) -> Model?,
-    GetHumanoid: (self: AvatarContext, player: Player?) -> Humanoid?,
-    GetAnimator: (self: AvatarContext, player: Player?) -> Animator?,
-}
-
-export type DanceSystem = System & {
-    DanceChanged: Signal<Player, string?>,
-    AddDance: (self: DanceSystem, name: string, animationId: string) -> (),
-    Play: (self: DanceSystem, name: string, player: Player?) -> boolean,
-    Stop: (self: DanceSystem, player: Player?) -> (),
-    GetCurrent: (self: DanceSystem, player: Player?) -> string?,
-    List: (self: DanceSystem) -> { string },
-}
-
-export type PluginExtended = System & {
-    PluginAdded: Signal<System>,
-    Register: (self: PluginExtended, definition: System) -> System,
-    --- Requires every ModuleScript child of `container` and registers what they return.
-    LoadFromFolder: (self: PluginExtended, container: Instance) -> { System },
-    List: (self: PluginExtended) -> { string },
 }
 
 --------------------------------------------------------------------------------

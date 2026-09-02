@@ -53,15 +53,15 @@
     A designer with no Luau at all can build a working button:
 
         Tag           Unrest
-        UnrestCommand "Music.Play"
-        UnrestPayload "Lobby"
+        UnrestCommand "Example.Action"
+        UnrestPayload "Confirm"
 
     and a label that follows framework state:
 
         Tag           Unrest
-        UnrestChannel "Music.NowPlaying"
+        UnrestChannel "Example.Status"
         UnrestBind    "Text"
-        UnrestFormat  "Music: {value}"
+        UnrestFormat  "Status: {value}"
 
     An attribute grants no privilege. `UnrestCommand` goes through the same
     `Bridge:Dispatch` as hand-written Luau, so the command's contract still decides whether
@@ -155,7 +155,7 @@ table.sort(INHERITABLE)
 
 --[[
     `UnrestFormat` is a template with one hole, not a format string: designers write
-    "Music: {value}", never "%s". A function replacement is used so a `%` in the value is a
+    "Status: {value}", never "%s". A function replacement is used so a `%` in the value is a
     literal per cent sign rather than a gsub escape.
 ]]
 local function applyFormat(format: string, value: any): string
@@ -276,9 +276,9 @@ end
 --[[
     One line naming every resolved attribute and the layer it came from:
 
-        UnrestChannel = Music.NowPlaying (from preset "MusicToggle"),
+        UnrestChannel = Example.Status (from preset "PrimaryAction"),
         UnrestGroup = MainMenu (inherited from Menu (ScreenGui)),
-        UnrestPayload = Dancefloor (set here)
+        UnrestPayload = Confirm (set here)
 
     `element.Attributes` says what the element ended up with; this says who decided, which
     is the question a designer actually has when a button does something they never typed.

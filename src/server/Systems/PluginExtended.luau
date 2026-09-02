@@ -23,7 +23,7 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Game = require(ReplicatedStorage.Game)
 local Maid = require(ReplicatedStorage.Unrest.Util.Maid)
 local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
 local Types = require(ReplicatedStorage.Unrest.Types)
@@ -50,7 +50,7 @@ function PluginExtended:_publish(): ()
         return
     end
     -- Stays on the server: the channel's contract declares no Visibility, so it is `Server`.
-    unrest.Bridge:Publish(Constants.Channels.Plugins, self:List())
+    unrest.Bridge:Publish(Game.Channels.Plugins, self:List())
 end
 
 --- Registers a third-party system. Validation and duplicate detection live in Core.
@@ -120,7 +120,7 @@ function PluginExtended:Init(unrest: Types.Unrest): ()
         client-callable one. The difference between this and `Music.Play` is one line in
         `Net/Contracts.luau` and nothing whatsoever here.
     ]]
-    self._maid:Add(unrest.Bridge:Handle(Constants.Commands.PluginReload, function(): number
+    self._maid:Add(unrest.Bridge:Handle(Game.Commands.PluginReload, function(): number
         local container = self._container
         if container == nil then
             warn("[Unrest.PluginExtended] Plugin.Reload was dispatched but no folder has been loaded yet.")

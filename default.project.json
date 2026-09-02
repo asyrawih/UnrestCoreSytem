@@ -10,6 +10,10 @@
         "$path": "src/shared"
       },
 
+      "Game": {
+        "$path": "src/game"
+      },
+
       "Packages": {
         "$path": {
           "optional": "Packages"

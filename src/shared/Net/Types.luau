@@ -12,6 +12,9 @@
     Contracts live in ReplicatedStorage on purpose. They are public knowledge -- a list of
     door names and which ones have a handle on the outside. The locks are on the server.
 
+    The framework declares no commands and no channels of its own. These types are the
+    vocabulary; the names are the game's, registered through `Contracts:Declare`.
+
     Owned by the net layer. Additive changes are fine; do not rename what is here.
 ]]
 
@@ -89,8 +92,8 @@ export type CommandContract = {
     --[[
         Whether a client may ask for this command at all. Absent or false means the command
         is unreachable from any client: the client-side guard refuses to send it, and the
-        server refuses it again on arrival. Deny by default is the point -- adding a command
-        to `Constants.Commands` grants nothing until a contract opts it in.
+        server refuses it again on arrival. Deny by default is the point -- and a registry
+        nobody has declared into denies everything, which is why an empty one is safe.
     ]]
     AllowClient: boolean?,
     --- Schema for the payload. A command with no `Payload` accepts only nil.
@@ -130,9 +133,41 @@ export type ChannelContract = {
     Description: string?,
 }
 
+--[[
+    A channel as a game writes it: `Visibility` may be omitted, and omitting it means
+    `Server`. The declaration type exists so the safe default is the *shortest* thing to
+    type; `Contracts:DeclareChannel` applies it and hands back a full `ChannelContract`.
+]]
+export type ChannelDeclaration = {
+    Name: string,
+    Visibility: ChannelVisibility?,
+    Value: ArgumentSpec?,
+    Description: string?,
+}
+
+--[[
+    The registry, not a table of contracts. The framework declares nothing; a game declares
+    its whole command and channel surface through `Declare` and `DeclareChannel` before it
+    starts the framework, and both realms read the result through the accessors below.
+
+    `Commands` and `Channels` are the live registries. They grow as declarations land, so
+    they are the right thing to iterate for tooling and the wrong thing to hold a reference
+    into and assume complete.
+]]
 export type Contracts = {
     Commands: { [string]: CommandContract },
     Channels: { [string]: ChannelContract },
+    --[[
+        Registers a command and returns the frozen contract. Throws on a malformed contract,
+        on `AllowClient`/`Authorize` outside the server realm, and on a name already
+        declared -- a command has exactly one contract, and quietly merging two is how a
+        `Realm` goes missing.
+    ]]
+    Declare: (self: Contracts, contract: CommandContract) -> CommandContract,
+    --- Registers a channel, applying the `Server` default for a missing `Visibility`.
+    DeclareChannel: (self: Contracts, declaration: ChannelDeclaration) -> ChannelContract,
+    --- Declared command names, sorted. What error messages list.
+    List: (self: Contracts) -> { string },
     --- Contract for `name`, or nil when the command was never declared.
     GetCommand: (self: Contracts, name: string) -> CommandContract?,
     --- Like `GetCommand` but throws with the list of declared commands.

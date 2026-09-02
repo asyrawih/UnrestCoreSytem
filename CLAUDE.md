@@ -29,10 +29,13 @@ selene src && stylua --check src
   watching the output window — warn, name the element and the fix, and keep the screen up.
 - Every connection an element owns hangs off a `Util/Maid`, so release is one line and
   cannot half-happen.
-- Stringly-typed names live once in `src/shared/Constants.luau`; never spell one twice.
+- Framework vocabulary lives once in `src/shared/Constants.luau` — the tag, the attribute
+  names, the remote names, the limits. **Game names do not live there.** Channel and command
+  names belong to the game, in `src/game/`, and the framework must never spell one.
 - An attribute grants **no privilege**. `UnrestCommand` goes through the same
-  `Bridge:Dispatch` as hand-written Luau; the command contract in `Net/Contracts.luau`
-  decides what a client may ask for.
+  `Bridge:Dispatch` as hand-written Luau, and the command contract decides what a client may
+  ask for. Contracts are a registry the game fills through `Contracts:Declare`, so an empty
+  registry means nothing is callable rather than everything.
 - Layer map: `Core` (never touches an Instance) -> `Bridge` -> `Elements` (never touches a
   system). `Net` is the same Bridge across the client/server line.
 - **A tag outlives its instance.** `Destroy()` takes an instance out of

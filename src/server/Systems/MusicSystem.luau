@@ -19,12 +19,13 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local SoundService = game:GetService("SoundService")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Game = require(ReplicatedStorage.Game)
+local GameTypes = require(ReplicatedStorage.Game.Types)
 local Maid = require(ReplicatedStorage.Unrest.Util.Maid)
 local Signal = require(ReplicatedStorage.Unrest.Util.Signal)
 local Types = require(ReplicatedStorage.Unrest.Types)
 
-local DEFAULT_TRACKS: { Types.Track } = {
+local DEFAULT_TRACKS: { GameTypes.Track } = {
     { Name = "Lobby", SoundId = "rbxassetid://1837879082", Volume = 0.35, Looped = true },
     { Name = "Dancefloor", SoundId = "rbxassetid://1836774112", Volume = 0.5, Looped = true },
 }
@@ -35,7 +36,7 @@ local MusicSystem = {
 
     NowPlayingChanged = (Signal.new("MusicSystem.NowPlayingChanged") :: any) :: Types.Signal<string?>,
 
-    _tracks = {} :: { [string]: Types.Track },
+    _tracks = {} :: { [string]: GameTypes.Track },
     _order = {} :: { string },
     _current = nil :: string?,
     _sound = nil :: Sound?,
@@ -70,7 +71,7 @@ local function ensureSound(self: typeof(MusicSystem)): Sound
 end
 
 --- Registers or replaces a track. Replacing the playing track does not restart it.
-function MusicSystem:AddTrack(track: Types.Track): ()
+function MusicSystem:AddTrack(track: GameTypes.Track): ()
     if typeof(track) ~= "table" or typeof(track.Name) ~= "string" or typeof(track.SoundId) ~= "string" then
         error('[Unrest.MusicSystem] :AddTrack expects { Name = "...", SoundId = "rbxassetid://..." }.', 0)
     end
@@ -156,8 +157,8 @@ function MusicSystem:_publish(): ()
     if bridge == nil then
         return
     end
-    bridge:Publish(Constants.Channels.NowPlaying, self._current)
-    bridge:Publish(Constants.Channels.MusicVolume, self._volume)
+    bridge:Publish(Game.Channels.NowPlaying, self._current)
+    bridge:Publish(Game.Channels.MusicVolume, self._volume)
 end
 
 function MusicSystem:Init(unrest: Types.Unrest): ()
@@ -176,28 +177,24 @@ function MusicSystem:Init(unrest: Types.Unrest): ()
         `payload` needs no defensive type check: the contract declares an identifier string and
         the gateway validated it. That is the whole point of putting the schema in the contract.
     ]]
-    self._maid:Add(
-        bridge:Handle(Constants.Commands.MusicPlay, function(_source: Types.CommandSource, payload: any): boolean
-            return self:Play(payload :: string)
-        end)
-    )
+    self._maid:Add(bridge:Handle(Game.Commands.MusicPlay, function(_source: Types.CommandSource, payload: any): boolean
+        return self:Play(payload :: string)
+    end))
 
-    self._maid:Add(bridge:Handle(Constants.Commands.MusicStop, function(): ()
+    self._maid:Add(bridge:Handle(Game.Commands.MusicStop, function(): ()
         self:Stop()
     end))
 
-    self._maid:Add(
-        bridge:Handle(Constants.Commands.MusicSetVolume, function(_source: Types.CommandSource, payload: any): ()
-            self:SetVolume(payload :: number)
-        end)
-    )
+    self._maid:Add(bridge:Handle(Game.Commands.MusicSetVolume, function(_source: Types.CommandSource, payload: any): ()
+        self:SetVolume(payload :: number)
+    end))
 
     --[[
         A server-only command, and it is registered exactly like the others. Nothing about this
         handler is defensive, because nothing about it needs to be: no client can reach it, and
         the reason is one missing `AllowClient` line in the contract table.
     ]]
-    self._maid:Add(bridge:Handle(Constants.Commands.MusicForceStopAll, function(): ()
+    self._maid:Add(bridge:Handle(Game.Commands.MusicForceStopAll, function(): ()
         self:Stop()
     end))
 end

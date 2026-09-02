@@ -59,8 +59,8 @@ local HANDLER_SCHEMA: Schema = {
 }
 
 local SYSTEM_SCHEMA: Schema = {
-    Name = { Kind = "string", Hint = 'the unique registry key, e.g. Name = "MusicSystem"' },
-    Dependencies = { Kind = "table", Hint = 'an array of system names, e.g. Dependencies = { "AvatarContext" }' },
+    Name = { Kind = "string", Hint = 'the unique registry key, e.g. Name = "MySystem"' },
+    Dependencies = { Kind = "table", Hint = 'an array of system names, e.g. Dependencies = { "MyOtherSystem" }' },
     Init = { Kind = "function", Hint = "Init = function(self, unrest) end" },
     Start = { Kind = "function", Hint = "Start = function(self) end" },
     Destroy = { Kind = "function", Hint = "Destroy = function(self) end" },
@@ -234,7 +234,7 @@ function Resolver.System(value: any): Types.System
 
     local system = value :: Types.System
     if typeof(system.Name) ~= "string" or #system.Name == 0 then
-        fail('System definition requires a non-empty string Name, e.g. Name = "MusicSystem".')
+        fail('System definition requires a non-empty string Name, e.g. Name = "MySystem".')
     end
 
     local dependencies = system.Dependencies

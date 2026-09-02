@@ -14,8 +14,8 @@
          system exists (if not yet started) by the time any `Start` runs.
       3. `Stop()` runs every `Destroy()` in reverse order.
 
-    Registering after startup is allowed -- that is how `PluginExtended` works. Such a system
-    is booted immediately, and its dependencies must already be running.
+    Registering after startup is allowed -- that is what makes hot-loaded systems possible.
+    Such a system is booted immediately, and its dependencies must already be running.
 ]]
 
 local Signal = require(script.Parent.Util.Signal)
@@ -161,7 +161,7 @@ function Core.new(): Types.Core
         table.insert(registrationOrder, system.Name)
 
         if isStarted then
-            -- Late registration (plugins). Dependencies must already be running.
+            -- Late registration, after boot. Dependencies must already be running.
             local dependencies: { string } = system.Dependencies or {}
             for _, dependency in dependencies do
                 if not booted[dependency] then

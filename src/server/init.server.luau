@@ -4,10 +4,18 @@
 
     The server bootstrap, and the whole flow in one file, in the order it has to happen:
 
-        1. contracts        already declared, in ReplicatedStorage, read by both realms
+        1. declarations     `ReplicatedStorage.Game` required FIRST, which declares this
+                            game's commands, channels and presets into the framework
         2. systems          registered, then started, in dependency order
         3. handlers         registered by each system's Init, through the Bridge
         4. gateway          started LAST, which is when the remotes appear
+
+    Step 1 is first on purpose, and it is a require rather than a call. The framework ships an
+    empty contract registry: until `Game` is required there is no such command as `Music.Play`,
+    and `Bridge:Handle` refuses to register a handler for a command no contract declares. Doing
+    it at the top of the file means the registry holds this game's whole surface before a
+    single system runs -- and if the line were ever deleted, the server would fail loudly at
+    step 3 rather than come up with a door open onto an empty room.
 
     Step 4 is last on purpose. `Net.Create()` is what makes the remotes exist in
     ReplicatedStorage, and the client cannot send anything before they do. Starting the
@@ -22,7 +30,10 @@
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
+--- Required for its side effect at least as much as for its names: this is the line that
+--- declares the commands, channels and presets everything below reaches for.
+local Game = require(ReplicatedStorage.Game)
+local GameTypes = require(ReplicatedStorage.Game.Types)
 local Types = require(ReplicatedStorage.Unrest.Types)
 local Unrest = require(ReplicatedStorage.Unrest)
 
@@ -34,7 +45,7 @@ local MusicSystem = require(script.Systems.MusicSystem)
 local PluginExtended = require(script.Systems.PluginExtended)
 
 --------------------------------------------------------------------------------
--- 1 + 2. Systems. Registration order is irrelevant -- Core sorts by `Dependencies`.
+-- 2 + 3. Systems. Registration order is irrelevant -- Core sorts by `Dependencies`.
 --------------------------------------------------------------------------------
 
 Unrest:Register(MusicSystem)
@@ -43,15 +54,14 @@ Unrest:Register(DanceSystem)
 Unrest:Register(PluginExtended)
 
 --- `Start` runs every `Init` (which is where each system calls `Bridge:Handle`) and then every
---- `Start`. By the time this returns, every command in the contract table that this server
---- owns has a handler.
+--- `Start`. By the time this returns, every declared command this server owns has a handler.
 local unrest = Unrest:Start()
 
 --------------------------------------------------------------------------------
 -- Plugin Extended: a third-party system, registered after startup.
 --------------------------------------------------------------------------------
 
-local plugins = unrest:Get("PluginExtended") :: Types.PluginExtended
+local plugins = unrest:Get("PluginExtended") :: GameTypes.PluginExtended
 
 --[[
     A plugin is nothing more than a table matching `Types.System`. It may declare dependencies
@@ -63,7 +73,7 @@ local Greeter: Types.System = {
     Dependencies = { "AvatarContext" },
 
     Init = function(self: any, framework: Types.Unrest)
-        self.Avatar = framework:Get("AvatarContext") :: Types.AvatarContext
+        self.Avatar = framework:Get("AvatarContext") :: GameTypes.AvatarContext
         self.Seen = {} :: { [number]: boolean }
     end,
 
@@ -88,7 +98,7 @@ plugins:Register(Greeter)
 -- Server-side content. None of this is reachable from a client.
 --------------------------------------------------------------------------------
 
-local music = unrest:Get("MusicSystem") :: Types.MusicSystem
+local music = unrest:Get("MusicSystem") :: GameTypes.MusicSystem
 music:AddTrack({ Name = "Intermission", SoundId = "rbxassetid://1837879082", Volume = 0.25, Looped = true })
 
 --------------------------------------------------------------------------------
@@ -122,10 +132,10 @@ gateway:Start()
     Both of these are ordinary dispatches from server code, and both run locally because their
     contracts put them on the server. The second one is unreachable from any client; nothing
     about this call site says so, and nothing about it has to. The difference lives in
-    `Net/Contracts.luau`, in the presence or absence of one `AllowClient = true` line.
+    this game's own `Contracts.luau`, in the presence or absence of one `AllowClient = true` line.
 ]]
-unrest.Bridge:Dispatch(Constants.Commands.MusicForceStopAll, nil)
-unrest.Bridge:Dispatch(Constants.Commands.MusicPlay, "Lobby")
+unrest.Bridge:Dispatch(Game.Commands.MusicForceStopAll, nil)
+unrest.Bridge:Dispatch(Game.Commands.MusicPlay, "Lobby")
 
 local clientCallable: { string } = {}
 local serverOnly: { string } = {}

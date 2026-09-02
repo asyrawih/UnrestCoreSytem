@@ -2,313 +2,318 @@
 --[[
     Unrest / Net / Contracts
 
-    The whole security policy of the framework, as data, in one screenful.
+    The whole security policy of the framework, as data -- and the framework supplies none of
+    the data. This module ships with zero commands and zero channels. It owns the *rule*; a
+    game owns the *names*.
 
-    This table lives in ReplicatedStorage, which means every client can read it. That is
-    intentional and it is not a leak: a contract is a list of door names and which ones have a
-    handle on the outside. Knowing the name `Music.ForceStopAll` and that it is server-only
-    tells an attacker nothing they can act on, because the lock is in the server realm, in
-    code they never receive.
+    A game states its own surface before `Unrest:Start()`:
+
+        local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
+
+        Contracts:Declare({
+            Name = "Example.Action",
+            Realm = "Server",
+            AllowClient = true,
+            Payload = { Kind = "string", MaxLength = 64 },
+            RateLimit = { Count = 4, Window = 1 },
+            Response = true,
+            Description = "What this command does, in one line.",
+        })
+
+        Contracts:DeclareChannel({
+            Name = "Example.Status",
+            Visibility = "Public",
+            Value = { Kind = "string", Optional = true, MaxLength = 64 },
+        })
 
     THE RULE, and everything else is a consequence of it:
 
         A command is unreachable from a client unless its contract sets `AllowClient = true`.
 
     Not "unless it is marked private". Not "unless a check was added". The absence of an
-    opt-in *is* the denial. Adding a name to `Constants.Commands` grants nothing at all; only
-    a row in this table with `AllowClient = true` does. `Music.ForceStopAll` and
-    `Plugin.Reload` below are the worked examples: they are ordinary commands that server code
-    dispatches freely, and no client can reach them, because nobody wrote one extra line.
+    opt-in *is* the denial -- and an empty registry is the strongest form of that. Before a
+    game declares anything, every name is refused by the client guard and refused again by
+    the server gate. Nothing is reachable by default because nothing exists by default.
 
     Channels follow the same shape with `Visibility`, whose default is `Server`. A channel
     someone forgets to declare does not replicate; it cannot leak by omission.
 
-    A note on `Authorize`: these functions are replicated with this module, so a client can
-    read them. Never close over a secret here. They may read game state (`player.Character`,
+    THIS TABLE IS REPLICATED, and that is intentional and not a leak: a contract is a list of
+    door names and which ones have a handle on the outside. Knowing that a name exists and is
+    server-only tells an attacker nothing they can act on, because the lock is in the server
+    realm, in code they never receive.
+
+    A note on `Authorize`: these functions are replicated with the declaration, so a client
+    can read them. Never close over a secret in one. They may read game state (`player.Character`,
     attributes the server owns) because they only ever *run* on the server -- the copy a
     client holds is inert.
+
+    A note on WHEN to declare: `:Declare` is the only door into the registry, and it must be
+    walked through on both realms, because both realms read their own copy of it. Put the
+    declarations in a module both bootstraps require, before either starts the framework. A
+    command declared on the server but not on the client is simply a command that client
+    cannot send; a command declared on the client but not on the server is refused on arrival.
 ]]
 
-local Constants = require(script.Parent.Parent.Constants)
+local Net = require(script.Parent.Parent.Net)
 local NetTypes = require(script.Parent.Types)
 
 type ArgumentSpec = NetTypes.ArgumentSpec
 type CommandContract = NetTypes.CommandContract
 type ChannelContract = NetTypes.ChannelContract
+type ChannelDeclaration = NetTypes.ChannelDeclaration
 type ChannelVisibility = NetTypes.ChannelVisibility
 
---[[
-    A channel as it is written below: `Visibility` may be omitted. Omitting it means `Server`,
-    and that is enforced by `normaliseChannels` rather than by everybody remembering. The
-    declaration type exists so the safe default is the *shortest* thing to type.
-]]
-type ChannelDeclaration = {
-    Name: string,
-    Visibility: ChannelVisibility?,
-    Value: ArgumentSpec?,
-    Description: string?,
-}
-
 --------------------------------------------------------------------------------
--- Reusable schemas
---------------------------------------------------------------------------------
-
---- Track and dance names are identifiers chosen by the game, never free text. Constraining
---- them to a pattern means a payload can never carry a newline, a control character, or the
---- 200KB string somebody hoped would end up in a log line.
-local IDENTIFIER: ArgumentSpec = {
-    Kind = "string",
-    MaxLength = 64,
-    Pattern = "[%w_%-%.]+",
-}
-
-local OPTIONAL_IDENTIFIER: ArgumentSpec = {
-    Kind = "string",
-    Optional = true,
-    MaxLength = 64,
-    Pattern = "[%w_%-%.]+",
-}
-
-local UNIT_INTERVAL: ArgumentSpec = {
-    Kind = "number",
-    Min = 0,
-    Max = 1,
-}
-
---------------------------------------------------------------------------------
--- Authorize hooks
+-- The registry
 --------------------------------------------------------------------------------
 
 --[[
-    The last gate, and the only one that can see the game rather than the message. Runs on the
-    server after the schema and rate checks, so it is allowed to assume a well-formed payload
-    and to do slightly more work than a per-request check normally could.
+    Two tables that grow, and nothing else. They are handed out as `Contracts.Commands` and
+    `Contracts.Channels` so that tooling can enumerate the declared surface, and they are the
+    same tables `:Declare` writes into -- a reader iterating them sees whatever has been
+    declared so far rather than a stale copy.
 
-    Its refusal reason is logged on the server and never sent back. A client that probes
-    `Dance.Play` learns only `Unauthorized`; it cannot tell "you are dead" from "you are not
-    loaded" from "that emote is staff-only", so it cannot map the inside of the server by
-    watching which lies fail differently.
+    Each individual contract IS frozen, at declare time. The container is not, because a
+    registry that cannot grow is a table, and a table is what this module stopped being. The
+    security property never depended on the container being immutable: it depends on the
+    client guard and the server gate asking `IsClientCallable` and believing the answer.
 ]]
-local function hasLivingCharacter(player: Player, _payload: any): (boolean, string?)
-    local character = player.Character
-    if character == nil then
-        return false, "the player has no character loaded"
-    end
+local COMMANDS: { [string]: CommandContract } = {}
+local CHANNELS: { [string]: ChannelContract } = {}
 
-    local humanoid = character:FindFirstChildOfClass("Humanoid")
-    if humanoid == nil then
-        return false, "the player's character has no Humanoid"
-    end
-    if humanoid.Health <= 0 then
-        return false, "the player is dead"
-    end
+local REALMS: { [string]: boolean } = table.freeze({ Server = true, Client = true })
 
-    return true, nil
+local VISIBILITIES: { [string]: boolean } = table.freeze({ Server = true, Player = true, Public = true })
+
+local ARGUMENT_KINDS: { [string]: boolean } = table.freeze({
+    string = true,
+    number = true,
+    integer = true,
+    boolean = true,
+    ["nil"] = true,
+    table = true,
+    Vector3 = true,
+    Color3 = true,
+    EnumItem = true,
+})
+
+--------------------------------------------------------------------------------
+-- Declaration-time checks
+--------------------------------------------------------------------------------
+
+local function fail(message: string): never
+    error("[Unrest.Net.Contracts] " .. message, 0)
 end
 
---------------------------------------------------------------------------------
--- Commands
---------------------------------------------------------------------------------
-
-local COMMANDS: { [string]: CommandContract } = {
-    [Constants.Commands.MusicPlay] = {
-        Name = Constants.Commands.MusicPlay,
-        Realm = "Server",
-        AllowClient = true,
-        Payload = IDENTIFIER,
-        RateLimit = { Count = 4, Window = 1 },
-        Response = true,
-        Description = "Play a registered track by name. Returns false for an unknown track.",
-    },
-
-    [Constants.Commands.MusicStop] = {
-        Name = Constants.Commands.MusicStop,
-        Realm = "Server",
-        AllowClient = true,
-        -- No `Payload`, so this command accepts nil and nothing else.
-        RateLimit = { Count = 4, Window = 1 },
-        Description = "Stop the current track.",
-    },
-
-    [Constants.Commands.MusicSetVolume] = {
-        Name = Constants.Commands.MusicSetVolume,
-        Realm = "Server",
-        AllowClient = true,
-        Payload = UNIT_INTERVAL,
-        --[[
-            Volume is shared state: one player's slider is heard by everyone. It is
-            client-callable because the framework's demo needs a command that writes global
-            state through the gate, and it is rate limited hard for exactly that reason. A
-            shipping game adds an `Authorize` here -- see `Dance.Play` for the shape -- and
-            the point of the contract table is that doing so is a one-line change in one file,
-            with no handler, UI, or transport code to touch.
-        ]]
-        RateLimit = { Count = 8, Window = 1 },
-        Description = "Set the master music volume, 0..1.",
-    },
-
-    --[[
-        SERVER-ONLY, WORKED EXAMPLE #1.
-
-        Note what is *not* here: there is no `AllowClient`, and there is no "Private = true"
-        either. The command is unreachable from a client because nobody opted it in. Server
-        code dispatches it like any other command; a client that sends its name gets
-        `NotClientCallable` from the gateway, having learned nothing.
-    ]]
-    [Constants.Commands.MusicForceStopAll] = {
-        Name = Constants.Commands.MusicForceStopAll,
-        Realm = "Server",
-        Description = "Operator command: silence the soundtrack and clear the now-playing state.",
-    },
-
-    [Constants.Commands.DancePlay] = {
-        Name = Constants.Commands.DancePlay,
-        Realm = "Server",
-        AllowClient = true,
-        Payload = IDENTIFIER,
-        RateLimit = { Count = 3, Window = 2 },
-        Authorize = hasLivingCharacter,
-        Response = true,
-        Description = "Play a named emote on the calling player's own character.",
-    },
-
-    [Constants.Commands.DanceStop] = {
-        Name = Constants.Commands.DanceStop,
-        Realm = "Server",
-        AllowClient = true,
-        RateLimit = { Count = 3, Window = 2 },
-        Description = "Stop the calling player's emote.",
-    },
-
-    --- SERVER-ONLY, WORKED EXAMPLE #2. Reloading plugin modules is an operator action; a
-    --- client asking for it would be asking the server to re-execute arbitrary ModuleScripts.
-    [Constants.Commands.PluginReload] = {
-        Name = Constants.Commands.PluginReload,
-        Realm = "Server",
-        Response = true,
-        Description = "Operator command: re-scan the plugin folder and register anything new.",
-    },
-}
-
---------------------------------------------------------------------------------
--- Channels
---------------------------------------------------------------------------------
-
-local CHANNEL_DECLARATIONS: { [string]: ChannelDeclaration } = {
-    [Constants.Channels.NowPlaying] = {
-        Name = Constants.Channels.NowPlaying,
-        Visibility = "Public",
-        Value = OPTIONAL_IDENTIFIER,
-        Description = "The track everyone is hearing, or nil for silence.",
-    },
-
-    [Constants.Channels.MusicVolume] = {
-        Name = Constants.Channels.MusicVolume,
-        Visibility = "Public",
-        Value = UNIT_INTERVAL,
-        Description = "Master music volume, 0..1.",
-    },
-
-    --[[
-        `Player` visibility: one player's own emote is their business and nobody else's, so
-        the value is addressed rather than broadcast. A `Player` channel is never retained
-        server-side either -- there is no single "current value" of a per-player channel, and
-        pretending otherwise would let one player's state be read as everyone's.
-    ]]
-    [Constants.Channels.Dance] = {
-        Name = Constants.Channels.Dance,
-        Visibility = "Player",
-        Value = OPTIONAL_IDENTIFIER,
-        Description = "The emote the receiving player is performing, or nil.",
-    },
-
-    --[[
-        `Player`, carrying the character's NAME and not the character. The schema is what
-        enforces that: a Model is an Instance, an Instance is not plain data, and validation
-        refuses it. The authoritative Model stays in AvatarContext's own table on the server,
-        where a live reference into the data model belongs.
-    ]]
-    [Constants.Channels.Character] = {
-        Name = Constants.Channels.Character,
-        Visibility = "Player",
-        Value = { Kind = "string", Optional = true, MaxLength = 64 },
-        Description = "The receiving player's character name while it is loaded, or nil.",
-    },
-
-    --[[
-        WORKED EXAMPLE of the channel default: no `Visibility` line at all, so this is
-        `Server` and never replicates. Which plugins a server loaded is its own business, and
-        the safe answer is the one you get by not thinking about it.
-    ]]
-    [Constants.Channels.Plugins] = {
-        Name = Constants.Channels.Plugins,
-        Description = "Names of the systems registered through PluginExtended. Server-side only.",
-    },
-}
-
-local function normaliseChannels(declarations: { [string]: ChannelDeclaration }): { [string]: ChannelContract }
-    local channels: { [string]: ChannelContract } = {}
-    for key, declaration in declarations do
-        -- The default is applied here, once, rather than being remembered per channel.
-        local visibility: ChannelVisibility = declaration.Visibility or "Server"
-        channels[key] = table.freeze({
-            Name = declaration.Name,
-            Visibility = visibility,
-            Value = declaration.Value,
-            Description = declaration.Description,
-        })
-    end
-    return table.freeze(channels)
-end
-
-local CHANNELS = normaliseChannels(CHANNEL_DECLARATIONS)
-
---------------------------------------------------------------------------------
--- Self-consistency, checked once at require time
---------------------------------------------------------------------------------
-
-for key, contract in COMMANDS do
-    table.freeze(contract)
-    if contract.Name ~= key then
-        error(`[Unrest.Net.Contracts] the command keyed "{key}" declares Name = "{contract.Name}".`, 0)
-    end
-    if contract.Realm ~= "Server" and contract.AllowClient == true then
-        error(
-            `[Unrest.Net.Contracts] "{key}" is AllowClient but its Realm is "{contract.Realm}". `
-                .. "A client-callable command must run on the server; there is nowhere else for it to be checked.",
-            0
-        )
-    end
-    if contract.Realm ~= "Server" and contract.Authorize ~= nil then
-        error(
-            `[Unrest.Net.Contracts] "{key}" declares Authorize but does not run on the server. `
-                .. "An authorization hook that runs on a client is decoration.",
-            0
-        )
-    end
-end
-
-for key, contract in CHANNELS do
-    if contract.Name ~= key then
-        error(`[Unrest.Net.Contracts] the channel keyed "{key}" declares Name = "{contract.Name}".`, 0)
-    end
-end
-
---------------------------------------------------------------------------------
-
-local function declaredCommands(): string
+local function sortedNames(source: { [string]: any }): { string }
     local names: { string } = {}
-    for name in COMMANDS do
+    for name in source do
         table.insert(names, name)
     end
     table.sort(names)
-    return table.concat(names, ", ")
+    return names
 end
 
+--- Reads sensibly when the registry is empty, which is the state a game hits first and the
+--- one a bare "Declared commands: ." would say nothing about.
+local function declaredCommands(): string
+    local names = sortedNames(COMMANDS)
+    if #names == 0 then
+        return "no commands have been declared yet -- call Contracts:Declare before dispatching"
+    end
+    return "declared commands: " .. table.concat(names, ", ")
+end
+
+local function assertOptional(value: any, kind: string, label: string): ()
+    if value ~= nil and typeof(value) ~= kind then
+        fail(`{label} must be a {kind} or nil, got {typeof(value)}.`)
+    end
+end
+
+--[[
+    A payload schema is walked once, at declare time, so a typo in `Kind` is a startup error
+    instead of a command that silently refuses every payload it is ever sent. `seen` is there
+    because a spec is an ordinary table a game wrote, and an ordinary table can point at
+    itself.
+]]
+local function assertSpec(spec: any, label: string, seen: { [any]: boolean }): ()
+    if typeof(spec) ~= "table" then
+        fail(`{label} must be a table describing an ArgumentSpec, got {typeof(spec)}.`)
+    end
+    if seen[spec] then
+        fail(`{label} contains a cycle; an ArgumentSpec must be a finite tree.`)
+    end
+    seen[spec] = true
+
+    local kind = (spec :: ArgumentSpec).Kind
+    if typeof(kind) ~= "string" or not ARGUMENT_KINDS[kind :: string] then
+        fail(
+            `{label} declares Kind = {tostring(kind)}, which is not an ArgumentKind. `
+                .. "Valid kinds: "
+                .. table.concat(sortedNames(ARGUMENT_KINDS), ", ")
+                .. "."
+        )
+    end
+
+    local of = (spec :: ArgumentSpec).Of
+    if of ~= nil then
+        assertSpec(of, `{label}.Of`, seen)
+    end
+
+    local fields = (spec :: ArgumentSpec).Fields
+    if fields ~= nil then
+        if typeof(fields) ~= "table" then
+            fail(`{label}.Fields must be a table of name -> ArgumentSpec, got {typeof(fields)}.`)
+        end
+        for key, field in fields do
+            if typeof(key) ~= "string" then
+                fail(`{label}.Fields is keyed by {typeof(key)}; field names must be strings.`)
+            end
+            assertSpec(field, `{label}.Fields.{key}`, seen)
+        end
+    end
+
+    seen[spec] = nil
+end
+
+--- The name a declaration may claim is exactly the name the transport will look at. Keeping
+--- the two predicates identical means a game cannot declare a command that no client could
+--- ever address.
+local function assertName(value: any, what: string): string
+    local name = Net.ReadCommand(value)
+    if name == nil then
+        fail(`a {what} needs a Name that is a string of 1..{Net.MaxCommandLength} characters, got {typeof(value)}.`)
+    end
+    return name :: string
+end
+
+--------------------------------------------------------------------------------
+
 local Contracts = {
-    Commands = table.freeze(COMMANDS),
+    Commands = COMMANDS,
     Channels = CHANNELS,
 }
+
+--[[
+    Declares a command and returns the frozen contract, so a game can keep the result:
+
+        local Play = Contracts:Declare({ Name = "Example.Action", Realm = "Server" })
+
+    Every consistency rule the old built-in table was checked against at require time is
+    checked here instead, per declaration, with the same refusals:
+
+      * `AllowClient` outside the server realm is refused -- a client-callable command must
+        run on the server, because there is nowhere else for it to be checked;
+      * `Authorize` outside the server realm is refused -- an authorization hook that runs on
+        a client is decoration;
+      * a second declaration of a name already taken is refused outright rather than merged
+        or overwritten. Two declarations of one name means two people believe they own the
+        policy for it, and silently keeping one of them is how a `Realm` or an `AllowClient`
+        goes quietly missing.
+]]
+function Contracts:Declare(contract: CommandContract): CommandContract
+    if typeof(contract) ~= "table" then
+        fail(`:Declare expects a command contract table, got {typeof(contract)}.`)
+    end
+
+    local name = assertName((contract :: any).Name, "command")
+    if COMMANDS[name] ~= nil then
+        fail(
+            `"{name}" is already declared. A command name has exactly one contract; `
+                .. "declare it once, in the module both realms require."
+        )
+    end
+
+    local realm = contract.Realm
+    if typeof(realm) ~= "string" or not REALMS[realm :: string] then
+        fail(`"{name}" declares Realm = {tostring(realm)}; it must be "Server" or "Client".`)
+    end
+
+    assertOptional(contract.AllowClient, "boolean", `"{name}".AllowClient`)
+    assertOptional(contract.Authorize, "function", `"{name}".Authorize`)
+    assertOptional(contract.Response, "boolean", `"{name}".Response`)
+    assertOptional(contract.Description, "string", `"{name}".Description`)
+
+    if realm ~= "Server" and contract.AllowClient == true then
+        fail(
+            `"{name}" is AllowClient but its Realm is "{realm}". `
+                .. "A client-callable command must run on the server; there is nowhere else for it to be checked."
+        )
+    end
+    if realm ~= "Server" and contract.Authorize ~= nil then
+        fail(
+            `"{name}" declares Authorize but does not run on the server. `
+                .. "An authorization hook that runs on a client is decoration."
+        )
+    end
+
+    if contract.Payload ~= nil then
+        assertSpec(contract.Payload, `"{name}".Payload`, {})
+    end
+
+    local rate = contract.RateLimit
+    if rate ~= nil then
+        if typeof(rate) ~= "table" then
+            fail(`"{name}".RateLimit must be a table of Count and Window, got {typeof(rate)}.`)
+        end
+        if typeof(rate.Count) ~= "number" or rate.Count ~= rate.Count or rate.Count <= 0 then
+            fail(`"{name}".RateLimit.Count must be a positive number, got {tostring(rate.Count)}.`)
+        end
+        if typeof(rate.Window) ~= "number" or rate.Window ~= rate.Window or rate.Window <= 0 then
+            fail(`"{name}".RateLimit.Window must be a positive number of seconds, got {tostring(rate.Window)}.`)
+        end
+    end
+
+    local frozen = table.freeze(contract)
+    COMMANDS[name] = frozen
+    return frozen
+end
+
+--[[
+    Declares a channel and returns the normalised, frozen contract. `Visibility` may be
+    omitted; omitting it means `Server`, and that default is applied here rather than by
+    everybody remembering it. The declaration type exists so the safe answer is the shortest
+    thing to type.
+
+    Like `:Declare`, a repeat declaration is refused: a channel with two visibilities is a
+    channel whose audience depends on load order.
+]]
+function Contracts:DeclareChannel(declaration: ChannelDeclaration): ChannelContract
+    if typeof(declaration) ~= "table" then
+        fail(`:DeclareChannel expects a channel declaration table, got {typeof(declaration)}.`)
+    end
+
+    local name = assertName((declaration :: any).Name, "channel")
+    if CHANNELS[name] ~= nil then
+        fail(`the channel "{name}" is already declared. Declare it once, in the module both realms require.`)
+    end
+
+    local visibility: ChannelVisibility = declaration.Visibility or "Server"
+    if not VISIBILITIES[visibility :: string] then
+        fail(`the channel "{name}" declares Visibility = {tostring(visibility)}; it must be Server, Player or Public.`)
+    end
+
+    assertOptional(declaration.Description, "string", `the channel "{name}".Description`)
+    if declaration.Value ~= nil then
+        assertSpec(declaration.Value, `the channel "{name}".Value`, {})
+    end
+
+    local contract: ChannelContract = table.freeze({
+        Name = name,
+        Visibility = visibility,
+        Value = declaration.Value,
+        Description = declaration.Description,
+    })
+    CHANNELS[name] = contract
+    return contract
+end
+
+--- Declared command names, sorted. Used by error messages and tooling; a game may use it to
+--- assert that its own declarations landed.
+function Contracts:List(): { string }
+    return sortedNames(COMMANDS)
+end
 
 function Contracts:GetCommand(name: string): CommandContract?
     if typeof(name) ~= "string" then
@@ -320,7 +325,7 @@ end
 function Contracts:ExpectCommand(name: string): CommandContract
     local contract = if typeof(name) == "string" then COMMANDS[name] else nil
     if contract == nil then
-        error(`[Unrest.Net.Contracts] no command named "{tostring(name)}". Declared commands: {declaredCommands()}.`, 0)
+        error(`[Unrest.Net.Contracts] no command named "{tostring(name)}". {declaredCommands()}.`, 0)
     end
     return contract
 end
@@ -336,7 +341,8 @@ end
     The single question both sides ask, and the reason the answer cannot be argued with:
     there is no third state. No contract, or a contract that never says `AllowClient = true`,
     is a no. Nothing in a request is consulted to compute this -- only the name, and only
-    against the server's own copy of the table.
+    against the server's own copy of the registry. An undeclared name is the same "no" as a
+    declared server-only one, which is why an empty registry is closed rather than open.
 ]]
 function Contracts:IsClientCallable(name: string): boolean
     if typeof(name) ~= "string" then
@@ -346,4 +352,9 @@ function Contracts:IsClientCallable(name: string): boolean
     return contract ~= nil and contract.AllowClient == true
 end
 
+--[[
+    The method table is frozen; the two registry tables it points at are not. `table.freeze`
+    is shallow, so this pins the API -- nobody replaces `IsClientCallable` with a function
+    that says yes -- while leaving the registry able to grow through `:Declare`.
+]]
 return (table.freeze(Contracts) :: any) :: NetTypes.Contracts

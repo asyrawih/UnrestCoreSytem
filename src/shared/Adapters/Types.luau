@@ -333,7 +333,7 @@ export type AttributeSource = {
     Preset: string?,
     --- The ancestor that supplied it, when `Origin` is `"Inherited"`.
     Ancestor: Instance?,
-    --- One phrase naming the source, e.g. `set here`, `from preset "MusicToggle"`,
+    --- One phrase naming the source, e.g. `set here`, `from preset "PrimaryAction"`,
     --- `inherited from Menu (ScreenGui)`.
     Text: string,
 }

@@ -11,17 +11,17 @@
       * A system handles intent     -> `Bridge:Handle(command, handler)`
 
     Channels are RETAINED: a late subscriber immediately receives the last published value, so
-    a button that mounts after the music started still renders the right track. That is what
-    makes the Bridge safe to use from UI with arbitrary mount order.
+    a label that mounts after the state was published still renders the current value. That is
+    what makes the Bridge safe to use from UI with arbitrary mount order.
 
     WHAT MAKES IT A NETWORK BOUNDARY
 
     A caller writes the same line on either side:
 
-        Bridge:Dispatch("Music.Play", "Lobby")
+        Bridge:Dispatch("Example.Action", "Confirm")
 
-    and the command's contract decides what that means. `Music.Play` has `Realm = "Server"`,
-    so on the server it runs locally and on the client it is forwarded over the gateway. The
+    and the command's contract decides what that means. A command with `Realm = "Server"`
+    runs locally on the server and is forwarded over the gateway from a client. The
     caller never chooses; there is no `:DispatchToServer`. This is the whole reason the
     security model can be enforced in one place: if the caller cannot pick the transport, the
     caller cannot route around the gate.
@@ -291,7 +291,7 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
 
         local contract = Contracts:GetCommand(name)
         if contract == nil then
-            rejectLoudly(name, "UnknownCommand", "no contract declares this command")
+            rejectLoudly(name, "UnknownCommand", "no contract declares this command; call Contracts:Declare first")
             return
         end
 
@@ -335,7 +335,11 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
 
         local contract = Contracts:GetCommand(name)
         if contract == nil then
-            return rejectLoudly(name, "UnknownCommand", "no contract declares this command")
+            return rejectLoudly(
+                name,
+                "UnknownCommand",
+                "no contract declares this command; call Contracts:Declare first"
+            )
         end
         if contract.Response ~= true then
             return rejectLoudly(name, "ResponseNotAllowed", "the contract does not declare Response = true")
