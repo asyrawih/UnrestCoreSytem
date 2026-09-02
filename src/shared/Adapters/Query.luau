@@ -38,16 +38,23 @@
     Any other tag is still exact. `Tag = "Highlighted"` means the instances carrying that tag,
     because a foreign tag is a label rather than an opt-in.
 
-    Liveness costs, for a cascading descriptor: one `DescendantAdded` per tagged root, one
-    `UnrestIgnore` watch per gate (`Selector.isGate` -- an ignored instance, or a Folder the
-    cascade passes through), and, per watched candidate, an `AncestryChanged` and an
-    `UnrestIgnore` watch on top of the `Destroying` it already had. Coverage is a fact about
-    the chain above an element, and those two are the only edits that can change it.
+    The bookkeeping that keeps a cascading source live -- the tagged roots, their
+    `DescendantAdded`, the `UnrestIgnore` watch per gate, the re-sweeps -- is not written
+    here either. It is `Cascade`, one ledger shared with `Elements`, and this module supplies
+    only what it does with the answer: cover means `watch`, uncover means `unwatch`. When
+    either happens is `Cascade`'s question, and it used to be answered twice.
+
+    Liveness costs, for a cascading descriptor: whatever the ledger spends (one
+    `DescendantAdded` per tagged root, one `UnrestIgnore` watch per gate) plus, per watched
+    candidate, an `AncestryChanged` and an `UnrestIgnore` watch on top of the `Destroying` it
+    already had. Coverage is a fact about the chain above an element, and those two are the
+    only edits that can change it.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
 
 local Adapters = require(script.Parent)
+local Cascade = require(script.Parent.Cascade)
 local Constants = require(script.Parent.Parent.Constants)
 local Maid = require(script.Parent.Parent.Util.Maid)
 local Resolver = require(script.Parent.Parent.Util.Resolver)
@@ -85,10 +92,12 @@ function Query.new(
     local watched: { [Instance]: Types.Maid } = {}
     local bindings: { [Instance]: Types.Maid } = {}
     local elements: { Instance } = {}
-    --- One `DescendantAdded` per tagged root, so cascaded arrivals are seen.
-    local roots: { [Instance]: Types.Maid } = {}
-    --- `UnrestIgnore` watches on instances that shape the managed set without being in it.
-    local gates: { [Instance]: Types.Maid } = {}
+    --[[
+        The cascade ledger, built once `watch` and `unwatch` exist because they are what it
+        covers and uncovers with. `nil` for a non-cascading source: an exact tag and an
+        ancestor subtree both enumerate themselves and have no roots or gates to keep.
+    ]]
+    local cascade: Cascade.CascadeEngine? = nil
     local destroyed = false
 
     local elementAdded: Types.Signal<Instance> = Signal.new("Query.ElementAdded")
@@ -162,10 +171,6 @@ function Query.new(
         detach(element)
     end
 
-    --- Defined below, once `watch` exists: coverage and `UnrestIgnore` both feed back into it.
-    local reconcileWatch: (instance: Instance) -> ()
-    local onIgnoreChanged: (instance: Instance) -> ()
-
     --[[
         A `Group` filter reads through the element to the chain above it, so an edit up there
         moves the element in or out of this set just as surely as an edit on the element
@@ -232,8 +237,9 @@ function Query.new(
                     if watchesAncestors then
                         bindAncestry(element, watcher)
                     end
-                    if cascading then
-                        reconcileWatch(element)
+                    local ledger = cascade
+                    if ledger ~= nil then
+                        ledger:Reconcile(element)
                     else
                         evaluate(element)
                     end
@@ -243,7 +249,10 @@ function Query.new(
                 -- Excluding this element excludes everything under it, so the whole subtree
                 -- is re-asked rather than just this one.
                 watcher:Add(element:GetAttributeChangedSignal(Constants.Attributes.Ignore):Connect(function()
-                    onIgnoreChanged(element)
+                    local ledger = cascade
+                    if ledger ~= nil then
+                        ledger:IgnoreChanged(element)
+                    end
                 end))
             end
 
@@ -256,150 +265,33 @@ function Query.new(
     end
 
     --------------------------------------------------------------------------------
-    -- Cascade sourcing
+    -- Sourcing: tags win, otherwise the ancestor subtree.
     --------------------------------------------------------------------------------
 
-    --[[
-        Coverage, re-derived rather than counted: an element under two tagged ancestors is
-        asked the question again and keeps answering yes until both are gone.
-    ]]
-    function reconcileWatch(instance: Instance): ()
-        if destroyed then
-            return
-        end
-        if Selector.isManaged(instance) then
-            watch(instance)
-        else
-            unwatch(instance)
-        end
-    end
-
-    --[[
-        Watches `UnrestIgnore` on an instance this query does not track but whose attribute
-        decides what it tracks underneath. Kept once discovered -- the set is bounded by the
-        shape of the tree, and a stale gate only ever re-asks a settled question.
-    ]]
-    local function watchGate(instance: Instance): ()
-        if destroyed or gates[instance] ~= nil then
-            return
-        end
-
-        local maid = Maid.new()
-        gates[instance] = maid
-        maid:Add(instance:GetAttributeChangedSignal(Constants.Attributes.Ignore):Connect(function()
-            onIgnoreChanged(instance)
-        end))
-        maid:Add(instance.Destroying:Connect(function()
-            local watcher = gates[instance]
-            gates[instance] = nil
-            if watcher ~= nil then
-                watcher:Destroy()
-            end
-        end))
-    end
-
-    local function dropGate(instance: Instance): ()
-        local maid = gates[instance]
-        if maid == nil then
-            return
-        end
-        gates[instance] = nil
-        maid:Destroy()
-    end
-
-    --- Everything the cascade reaches under `root`, plus the gates that keep it live.
-    local function sweepInto(root: Instance): ()
-        local cascaded, gated = Selector.cascadeUnder(root)
-        for _, instance in cascaded do
-            reconcileWatch(instance)
-        end
-        for _, instance in gated do
-            watchGate(instance)
-        end
-    end
-
-    --[[
-        `UnrestIgnore` went on or came off. Both directions are the same three steps: keep
-        listening, re-ask for what is already watched under it, then enumerate what the edit
-        may have brought back. One of the last two is always a no-op.
-    ]]
-    function onIgnoreChanged(instance: Instance): ()
-        if destroyed then
-            return
-        end
-
-        watchGate(instance)
-        reconcileWatch(instance)
-        for other in table.clone(watched) do
-            if other:IsDescendantOf(instance) then
-                reconcileWatch(other)
-            end
-        end
-        sweepInto(instance)
-
-        if watched[instance] ~= nil then
-            dropGate(instance)
-        end
-    end
-
-    --[[
-        One `DescendantAdded` per tagged root and nothing per descendant. Departures are not
-        watched here: every candidate carries its own `AncestryChanged`, which fires after the
-        move with the final parent in place.
-    ]]
-    local function addRoot(root: Instance): ()
-        if destroyed or roots[root] ~= nil then
-            return
-        end
-
-        local maid = Maid.new()
-        roots[root] = maid
-        maid:Add(root.DescendantAdded:Connect(function(instance: Instance)
-            if destroyed then
-                return
-            end
-            for _, gate in Selector.gatesAbove(instance, root) do
-                watchGate(gate)
-            end
-            reconcileWatch(instance)
-        end))
-    end
-
-    local function onTagged(root: Instance): ()
-        addRoot(root)
-        reconcileWatch(root)
-        sweepInto(root)
-    end
-
-    local function onUntagged(root: Instance): ()
-        local maid = roots[root]
-        if maid ~= nil then
-            roots[root] = nil
-            maid:Destroy()
-        end
-
-        -- Coverage can only shrink, and only under the root that lost the tag.
-        reconcileWatch(root)
-        for instance in table.clone(watched) do
-            if instance:IsDescendantOf(root) then
-                reconcileWatch(instance)
-            end
-        end
-    end
-
-    -- Sourcing: tags win, otherwise the ancestor subtree.
     if tag ~= nil then
         if cascading then
             --[[
                 A tagged instance is a root, not a result: it brings itself and everything the
-                cascade reaches under it. Untagging one re-asks the question for what is under
-                it, which keeps whatever a second tagged ancestor still covers.
+                cascade reaches under it, and untagging one re-asks the question for what is
+                under it rather than dropping the lot. The ledger owns all of that; watching
+                and unwatching a candidate is this module's half of the deal.
             ]]
-            lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(onTagged))
-            lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(onUntagged))
-            for _, root in CollectionService:GetTagged(tag) do
-                onTagged(root)
-            end
+            local engine = Cascade.new({
+                Cover = watch,
+                Uncover = unwatch,
+                Tracks = function(instance: Instance): boolean
+                    return watched[instance] ~= nil
+                end,
+                Covered = function(): { Instance }
+                    local covered: { Instance } = {}
+                    for instance in watched do
+                        table.insert(covered, instance)
+                    end
+                    return covered
+                end,
+            })
+            cascade = engine
+            engine:Source(tag)
         else
             lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(watch))
             lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(unwatch))
@@ -475,14 +367,10 @@ function Query.new(
         table.clear(bindings)
         table.clear(elements)
 
-        for _, maid in roots do
-            maid:Destroy()
+        local ledger = cascade
+        if ledger ~= nil then
+            ledger:Destroy()
         end
-        table.clear(roots)
-        for _, maid in gates do
-            maid:Destroy()
-        end
-        table.clear(gates)
 
         lifetime:Destroy()
     end

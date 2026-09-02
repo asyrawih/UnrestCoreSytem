@@ -32,17 +32,22 @@
     `UnrestIgnore = true` opts an instance and its whole subtree back out, live in both
     directions, for the one decorative subtree inside an otherwise managed screen.
 
-    The rule itself is not written here. `Selector.isManaged` is the predicate,
-    `Selector.cascadeUnder` the enumeration, and `Query` sources from the same two -- because
-    an element this manager adopted and wired but a query could not find would be worse than
-    an element nobody adopted at all.
+    Neither the rule nor the bookkeeping is written here. `Selector.isManaged` is the
+    predicate and `Selector.cascadeUnder` the enumeration; `Adapters.Cascade` is the ledger
+    that keeps those answers live -- the tagged roots, their `DescendantAdded`, the
+    `UnrestIgnore` watch per gate, the re-sweeps. `Query` uses the same predicate and the same
+    ledger, because an element this manager adopted and wired but a query could not find would
+    be worse than an element nobody adopted at all, and two copies of the ledger is exactly
+    how that happens.
 
-    Coverage is re-derived, never counted. Anything that can change it ends at `reconcile`,
-    which asks `Selector` again; an element covered by two tagged ancestors keeps answering
-    yes until both are gone, with no reference count to keep in step with the tree.
+    What this module supplies the ledger is the half that genuinely differs: cover means
+    adopt, uncover means release. When either happens is not its question.
 
-    The connection budget, in full: one `DescendantAdded` per tagged root, one
-    `UnrestIgnore` watch per gate (`Selector.isGate`), and -- on adopted elements only, which
+    Coverage is re-derived, never counted: an element covered by two tagged ancestors keeps
+    answering yes until both are gone, with no reference count to keep in step with the tree.
+
+    The connection budget, in full: whatever the ledger spends (one `DescendantAdded` per
+    tagged root, one `UnrestIgnore` watch per gate) and -- on adopted elements only, which
     already carry a maid -- one more `UnrestIgnore` watch each. Nothing is connected to an
     instance the framework does not manage and could not adopt.
 
@@ -114,9 +119,8 @@
     the element is adopted with its own attributes only.
 ]]
 
-local CollectionService = game:GetService("CollectionService")
-
 local Adapters = require(script.Parent.Adapters)
+local Cascade = require(script.Parent.Adapters.Cascade)
 local Constants = require(script.Parent.Constants)
 local Maid = require(script.Parent.Util.Maid)
 local Presets = require(script.Parent.Presets)
@@ -324,10 +328,6 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         so "adopts one instance directly, tag or no tag" stays true.
     ]]
     local byTag: { [Instance]: true } = {}
-    --- One `DescendantAdded` per tagged root. The whole live half of the cascade.
-    local roots: { [Instance]: Types.Maid } = {}
-    --- `UnrestIgnore` watches on the gates `Selector.isGate` names.
-    local gates: { [Instance]: Types.Maid } = {}
 
     local lifetime = Maid.new()
     local started = false
@@ -478,166 +478,42 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     -- The cascade
     --------------------------------------------------------------------------------
 
-    local onIgnoreChanged: (instance: Instance) -> ()
-
     --[[
-        Watches `UnrestIgnore` on an instance the framework does not manage but whose
-        attribute still decides what it manages underneath -- a Folder the cascade passes
-        through, or the ignored Frame it stopped at. `Selector.isGate` names them.
+        The ledger `Query` also uses. It decides *when* an instance is covered; adopting and
+        releasing is what this manager does about it.
 
-        Once discovered a gate is kept, even after the tag above it goes away. The set is
-        bounded by the shape of the tree rather than by how often tags are edited, and a gate
-        whose subtree is no longer managed only ever re-asks a question that answers "nothing
-        to do".
+        `Uncover` releases only what the tag rules brought in. A hand `:Adopt`ed instance is
+        absent from `byTag` and survives a tag going away, so "adopts one instance directly,
+        tag or no tag" stays true. `Cover` records the ones that stick: an `:Adopt` can decline
+        (no adapter matched the class), and a tagged Folder that was never adopted is a gate
+        the ledger keeps watching rather than an element this manager holds.
     ]]
-    local function watchGate(instance: Instance): ()
-        if destroyed or gates[instance] ~= nil then
-            return
-        end
-
-        local maid = Maid.new()
-        gates[instance] = maid
-        maid:Add(instance:GetAttributeChangedSignal(ATTRIBUTES.Ignore):Connect(function()
-            onIgnoreChanged(instance)
-        end))
-        maid:Add(instance.Destroying:Connect(function()
-            local watcher = gates[instance]
-            gates[instance] = nil
-            if watcher ~= nil then
-                watcher:Destroy()
-            end
-        end))
-    end
-
-    local function dropGate(instance: Instance): ()
-        local maid = gates[instance]
-        if maid == nil then
-            return
-        end
-        gates[instance] = nil
-        maid:Destroy()
-    end
-
-    --[[
-        Adopts or releases one instance according to `Selector.isManaged`.
-
-        Every path that can change coverage ends here, and coverage is *re-derived* rather
-        than counted. An element under two tagged ancestors is not held by two references: it
-        is asked the question again, and while either ancestor still carries the tag the
-        answer is still yes. Nothing has to be decremented in the right order, and no counter
-        can drift out of step with the tree it describes.
-    ]]
-    local function reconcile(instance: Instance): ()
-        if destroyed then
-            return
-        end
-
-        if Selector.isManaged(instance) then
-            if typed:Adopt(instance) ~= nil then
-                byTag[instance] = true
-            end
-        elseif byTag[instance] then
-            typed:Release(instance)
-        end
-    end
-
-    --- Adopts everything the cascade reaches under `root`, and watches the gates it reports.
-    local function sweep(root: Instance): ()
-        local cascaded, gated = Selector.cascadeUnder(root)
-        for _, instance in cascaded do
-            reconcile(instance)
-        end
-        for _, instance in gated do
-            watchGate(instance)
-        end
-    end
-
-    --[[
-        Re-asks the question for everything managed at or under `root`. Only releases can come
-        of it: nothing is adopted by a tag going away or by an `UnrestIgnore` appearing. The
-        managed set is walked rather than the tree, so untagging a ScreenGui costs the elements
-        it adopted and not the instances it contains.
-    ]]
-    local function reconcileUnder(root: Instance): ()
-        reconcile(root)
-        for _, instance in table.clone(order) do
-            if instance ~= root and instance:IsDescendantOf(root) then
-                reconcile(instance)
-            end
-        end
-    end
-
-    --[[
-        `UnrestIgnore` went on or came off. Both directions are the same two steps -- release
-        what is now excluded, adopt what is no longer excluded -- because one of them is always
-        a no-op and neither needs to know which way the edit went.
-    ]]
-    function onIgnoreChanged(instance: Instance): ()
-        if destroyed then
-            return
-        end
-
-        -- Something must stay attached across the release, or the edit that clears the
-        -- attribute again would have nobody left listening for it.
-        watchGate(instance)
-
-        reconcileUnder(instance)
-        sweep(instance)
-
-        if managed[instance] ~= nil then
-            -- Adopted again: its own adoption maid carries the watch from here.
-            dropGate(instance)
-        end
-    end
-
-    --[[
-        One `DescendantAdded` per tagged root, and nothing per descendant. A GuiObject parented
-        into a managed subtree is adopted on arrival -- and so is every GuiObject of a whole
-        panel parented in at once, because the signal fires once for each of them.
-
-        There is deliberately no `DescendantRemoving`. Leaving is the element's own news: every
-        adopted element already watches `AncestryChanged`, which fires *after* the move with
-        the final parent in place, so the question it re-asks has a true answer.
-        `DescendantRemoving` fires while the element is still where it was and could only ask
-        the question one step too early.
-    ]]
-    local function addRoot(root: Instance): ()
-        if destroyed or roots[root] ~= nil then
-            return
-        end
-
-        local maid = Maid.new()
-        roots[root] = maid
-        maid:Add(root.DescendantAdded:Connect(function(instance: Instance)
+    local cascade = Cascade.new({
+        Cover = function(instance: Instance): ()
             if destroyed then
                 return
             end
-            for _, gate in Selector.gatesAbove(instance, root) do
-                watchGate(gate)
+            if typed:Adopt(instance) ~= nil then
+                byTag[instance] = true
             end
-            reconcile(instance)
-        end))
-    end
-
-    local function onTagAdded(root: Instance): ()
-        addRoot(root)
-        reconcile(root)
-        if managed[root] == nil then
-            -- Tagged but not adopted -- no adapter matched its class. Its `UnrestIgnore` still
-            -- decides what the cascade does underneath, and nothing else is watching it.
-            watchGate(root)
-        end
-        sweep(root)
-    end
-
-    local function onTagRemoved(root: Instance): ()
-        local maid = roots[root]
-        if maid ~= nil then
-            roots[root] = nil
-            maid:Destroy()
-        end
-        reconcileUnder(root)
-    end
+        end,
+        Uncover = function(instance: Instance): ()
+            if destroyed then
+                return
+            end
+            if byTag[instance] then
+                typed:Release(instance)
+            end
+        end,
+        Tracks = function(instance: Instance): boolean
+            return managed[instance] ~= nil
+        end,
+        --- Adoption order, so a release sweep runs in the order `All()` reports.
+        Covered = function(): { Instance }
+            return table.clone(order)
+        end,
+    })
+    lifetime:Add(cascade)
 
     function manager:Adopt(instance: Instance): Types.ManagedElement?
         if destroyed then
@@ -697,7 +573,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             never re-resolves anything: it decides whether this element is here at all.
         ]]
         adoptionMaid:Add(instance:GetAttributeChangedSignal(ATTRIBUTES.Ignore):Connect(function()
-            onIgnoreChanged(instance)
+            cascade:IgnoreChanged(instance)
         end))
         --[[
             Moving an element changes which ancestors it inherits from, so the answer has to
@@ -767,13 +643,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             cascaded elements and leaves alone any still covered by a second tagged ancestor
             or by a tag of their own.
         ]]
-        local tag = Constants.Tag
-        lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(onTagAdded))
-        lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(onTagRemoved))
-
-        for _, instance in CollectionService:GetTagged(tag) do
-            onTagAdded(instance)
-        end
+        cascade:Source(Constants.Tag)
     end
 
     function manager:Get(instance: Instance): Types.ManagedElement?
@@ -813,15 +683,6 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         end
         table.clear(order)
         table.clear(byTag)
-
-        for _, maid in roots do
-            maid:Destroy()
-        end
-        table.clear(roots)
-        for _, maid in gates do
-            maid:Destroy()
-        end
-        table.clear(gates)
 
         lifetime:Destroy()
     end

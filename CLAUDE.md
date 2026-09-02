@@ -38,6 +38,16 @@ selene src && stylua --check src
   registry means nothing is callable rather than everything.
 - Layer map: `Core` (never touches an Instance) -> `Bridge` -> `Elements` (never touches a
   system). `Net` is the same Bridge across the client/server line.
+- **The cascade is one rule and one ledger.** `Selector` holds the rule -- `isManaged`,
+  `cascadeUnder`, `isGate`, `gatesAbove`, `isPresent` -- as pure predicates with no state.
+  `Adapters/Cascade.luau` holds the *bookkeeping* that keeps those answers live: the tagged
+  roots, one `DescendantAdded` each, one `UnrestIgnore` watch per gate, and the re-sweeps a
+  tag or an ignore edit triggers. `Elements` and `Query` each hand it four callbacks
+  (`Cover` / `Uncover` / `Tracks` / `Covered`) and nothing else -- adopting vs. watching is
+  all they are still allowed to disagree about. This was two copies once, ~74% identical, and
+  the bug pattern this repo keeps hitting is one question answered in two places. Do not add a
+  third copy, and do not move the ledger into `Selector`: state in there would cost the module
+  the thing that makes it trustworthy.
 - **A tag outlives its instance.** `Destroy()` takes an instance out of
   `CollectionService:GetTagged` but leaves the tag on it, so `HasTag` answers `true` forever
   after. `Selector.isManaged` therefore asks `IsDescendantOf(game)` first: managed means
