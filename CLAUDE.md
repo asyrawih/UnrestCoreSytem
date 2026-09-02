@@ -29,6 +29,13 @@ selene src && stylua --check src
   watching the output window — warn, name the element and the fix, and keep the screen up.
 - Every connection an element owns hangs off a `Util/Maid`, so release is one line and
   cannot half-happen.
+- **Raising must not leave half a set behind.** `Adapters.bind` checks the whole handler
+  table before it connects anything, so a raise means nothing was wired; `Query` therefore
+  binds an element *before* recording it, and `QueryHandle:Bind` proposes the merge against a
+  copy and asks every element it holds before committing. Nothing is ever counted by
+  `:Count()` that is not bound. The one thing `Bind` cannot check is an element tagged later:
+  that one is refused on arrival and stays out of the set, and because the refusal reaches no
+  caller it is raised on its own thread rather than unwinding the cascade sweep that found it.
 - Framework vocabulary lives once in `src/shared/Constants.luau` — the tag, the attribute
   names, the remote names, the limits. **Game names do not live there.** Channel and command
   names belong to the game, in `src/game/`, and the framework must never spell one.

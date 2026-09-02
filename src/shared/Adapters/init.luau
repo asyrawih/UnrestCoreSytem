@@ -320,6 +320,45 @@ end
 --------------------------------------------------------------------------------
 
 --[[
+    The one sentence a refusal is worded as. `bind` raises it, `rejects` returns it and the
+    soft path warns it -- three callers, one wording, because being told two different
+    stories about one refusal is worse than being told either of them.
+]]
+local function refusal(registry: Types.AdapterRegistry, element: Instance, key: string, hint: string): string
+    return `[Unrest.Adapters] handler "{key}" cannot bind to {element:GetFullName()}: `
+        .. `{registry:Describe(element)}. {hint}`
+end
+
+--[[
+    Why `element` cannot take `handlers`, worded exactly as `bind` would raise it, or `nil`
+    when every handler in the table binds.
+
+    Public because asking *before* anything has been touched is the only way a caller can stay
+    atomic across more than one element. `QueryHandle:Bind` asks this of every element it
+    holds before it merges a new handler table in, so a table that one element cannot honour
+    leaves the query exactly as it was instead of half rebuilt around a handler that raises.
+
+    Which unsupported handler it names is whichever the hash order reaches first -- the same
+    arbitrary pick `bind` makes, and there is only ever one message either way.
+]]
+function Adapters.rejects(
+    registry: Types.AdapterRegistry,
+    element: Instance,
+    handlers: Types.Handlers,
+    hint: string
+): string?
+    for key in handlers :: { [string]: Types.ElementHandler } do
+        if LIFECYCLE[key] then
+            continue
+        end
+        if not registry:Supports(element, key) then
+            return refusal(registry, element, key, hint)
+        end
+    end
+    return nil
+end
+
+--[[
     Attaches a handler table to one element and parks the connections in `maid`.
 
     Shared by the query engine and the ElementManager so that "a Frame cannot Submit" is
@@ -329,6 +368,14 @@ end
     `soft` downgrades that failure from an error to a warning: code that binds a handler its
     element cannot support is a bug and should stop, whereas a *designer* who typed the
     wrong attribute should not take the rest of the screen down with them.
+
+    The two severities also differ in how much they finish. Raising is **all or nothing**: the
+    whole table is checked before a single connection is made, so an element that cannot take
+    one handler is left holding none of them rather than the handful that happened to come
+    first out of the hash order. Callers lean on that -- `Query` records an element only once
+    `bind` has returned, which is only safe while a raise means nothing was wired. Warning is
+    deliberately the opposite: the unsupported name is skipped and the rest of the table still
+    binds, because not taking the screen down over one mistyped attribute is the whole point.
 ]]
 function Adapters.bind(
     registry: Types.AdapterRegistry,
@@ -338,6 +385,13 @@ function Adapters.bind(
     hint: string,
     soft: boolean?
 ): ()
+    if not soft then
+        local rejection = Adapters.rejects(registry, element, handlers, hint)
+        if rejection ~= nil then
+            error(rejection, 0)
+        end
+    end
+
     local resolved = registry:Resolve(element)
 
     for key, handler in handlers :: { [string]: Types.ElementHandler } do
@@ -347,8 +401,8 @@ function Adapters.bind(
 
         local binder = if resolved ~= nil then resolved.Events[key] else nil
         if binder == nil then
-            local message = `[Unrest.Adapters] handler "{key}" cannot bind to {element:GetFullName()}: `
-                .. `{registry:Describe(element)}. {hint}`
+            -- Only reachable in soft mode: the pre-flight above has already raised otherwise.
+            local message = refusal(registry, element, key, hint)
             if soft then
                 warn(message)
                 continue

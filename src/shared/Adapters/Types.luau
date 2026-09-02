@@ -433,7 +433,15 @@ export type QueryHandle = {
     Count: (self: QueryHandle) -> number,
     --- Visits the current elements. Chainable.
     Each: (self: QueryHandle, visitor: ElementHandler) -> QueryHandle,
-    --- Merges more handlers in and rebinds every element. Chainable.
+    --[[
+        Merges more handlers in and rebinds every element. Chainable.
+
+        Atomic. Every element the query currently holds is asked whether it can honour the
+        merged table first, so a handler one of them cannot support raises having changed
+        nothing at all -- not the handler table, not a single binding. An element that arrives
+        *after* the merge and cannot honour it is refused on arrival and simply stays out of
+        the set; the header of `Adapters/Query` says where that refusal is raised and why.
+    ]]
     Bind: (self: QueryHandle, handlers: Handlers) -> QueryHandle,
     Destroy: (self: QueryHandle) -> (),
 }

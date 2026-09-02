@@ -49,6 +49,55 @@
     candidate, an `AncestryChanged` and an `UnrestIgnore` watch on top of the `Destroying` it
     already had. Coverage is a fact about the chain above an element, and those two are the
     only edits that can change it.
+
+    ---------------------------------------------------------------------------
+    Nothing is counted that is not bound
+    ---------------------------------------------------------------------------
+
+    An element is either bound and counted, or absent. There is no third state, and there are
+    two places that have to hold that line.
+
+    `attach` binds *before* it records. An element whose class cannot honour one of the bound
+    handlers never enters `elements` or `bindings`, so `:Count()` can never report something
+    that is wired to nothing, and `Added` / `ElementAdded` fire only for elements that really
+    arrived. Recording first, as this used to, left a refused element counted, handed out by
+    `:Elements()`, holding a maid with nothing in it, and announced by no signal at all.
+
+    `Bind` is atomic. The merge is proposed against a copy, every element the query currently
+    holds is asked whether it can take that copy, and only "all of them" is allowed to change
+    anything. A refusal raises before `bound` or a single binding has been touched. Merging
+    first and rebuilding afterwards -- which is what it used to do -- failed three ways at
+    once on a heterogeneous set: the elements the loop had already reached were rebuilt around
+    the new handler, the one that raised and every element after it were left with a maid that
+    had been cleaned and never refilled, and the handler that could not bind stayed in `bound`
+    so every later arrival raised on it too.
+
+    ---------------------------------------------------------------------------
+    Elements that arrive later
+    ---------------------------------------------------------------------------
+
+    `Bind` can only answer for the elements the query holds at the moment it is called. A
+    `Frame` tagged five minutes afterwards can match a descriptor whose bound handlers only a
+    button can honour, and no amount of checking at `Bind` time can know that in advance.
+
+    Such an element is refused exactly as it would have been at `Bind` time and stays out of
+    the set -- not counted, not in `elements`, no `Added`. It keeps its watch, so a later
+    rename or attribute edit asks the question again; and because `Bind` only ever *adds*
+    handler names, a refusal can never turn into an acceptance by binding more.
+
+    The refusal stays an error rather than becoming a warning. This is code binding a handler
+    its element cannot support, which is the raising half of "code raises, attributes warn",
+    and quietly dropping the element would hide exactly the kind of half-wired screen the two
+    fixes above exist to prevent. What differs is *where* it lands:
+
+      * during `Query.new`'s first sourcing pass the caller who wrote the handler table is on
+        the stack, so it raises there and the `Unrest:Query` call throws;
+      * afterwards there is no such caller. The element arrived through a CollectionService
+        signal or a cascade sweep, and unwinding through one of those would abandon the rest
+        of the walk -- a panel parented in whole would leave every sibling the sweep had not
+        reached yet unwatched, which is the same half-built set by another route. So the
+        refusal is raised on its own thread: it still reaches the output window with a
+        traceback, and the walk that found the element finishes.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -99,6 +148,13 @@ function Query.new(
     ]]
     local cascade: Cascade.CascadeEngine? = nil
     local destroyed = false
+    --[[
+        True only while the sourcing block below is still assembling the first set, which is
+        the one window in which the code that supplied `handlers` is on the stack. That is the
+        whole of the difference between the two ways `attach` reports a refusal -- see
+        "Elements that arrive later" in the header.
+    ]]
+    local sourcing = true
 
     local elementAdded: Types.Signal<Instance> = Signal.new("Query.ElementAdded")
     local elementRemoved: Types.Signal<Instance> = Signal.new("Query.ElementRemoved")
@@ -133,16 +189,37 @@ function Query.new(
         elementRemoved:Fire(element)
     end
 
+    --[[
+        Bind first, record second. Everything before the `Adapters.bind` call is local to this
+        function, so an element the registry refuses leaves the set exactly as it found it:
+        nothing in `bindings`, nothing in `elements`, no `Added`, no `ElementAdded`.
+
+        The refusal is asked for up front rather than caught afterwards, because who gets to
+        hear about it depends on how this element got here, and only the header's two cases
+        can tell those apart. `Adapters.bind` would raise the identical sentence a moment
+        later; asking first is what lets this choose the thread it raises on.
+    ]]
     local function attach(element: Instance): ()
         if bindings[element] ~= nil then
             return
         end
 
+        local rejection = Adapters.rejects(registry, element, bound, hint)
+        if rejection ~= nil then
+            if sourcing then
+                error(rejection, 0)
+            end
+            task.spawn(function()
+                error(rejection, 0)
+            end)
+            return
+        end
+
         local binding = Maid.new()
+        Adapters.bind(registry, element, bound, binding, hint)
+
         bindings[element] = binding
         table.insert(elements, element)
-
-        Adapters.bind(registry, element, bound, binding, hint)
 
         local added = bound.Added
         if added ~= nil then
@@ -316,6 +393,9 @@ function Query.new(
         end
     end
 
+    -- Past here every arrival is the element's own news rather than this call's.
+    sourcing = false
+
     function handle:Elements(): { Instance }
         return table.clone(elements)
     end
@@ -340,12 +420,33 @@ function Query.new(
         end
 
         local validated = Resolver.Handlers(extra)
-        local mutable = bound :: { [string]: any }
+
+        --[[
+            Proposed, checked, and only then committed. The merge lands in a copy, so a
+            refusal from any single element can raise with `bound` untouched -- and it has to,
+            because the alternative leaves a handler nothing can bind sitting in the table
+            every future arrival is bound against.
+        ]]
+        local merged: { [string]: any } = table.clone(bound :: { [string]: any })
         for key, value in validated :: { [string]: any } do
-            mutable[key] = value
+            merged[key] = value
+        end
+        local proposed = (merged :: any) :: Types.Handlers
+
+        for element in bindings do
+            local rejection = Adapters.rejects(registry, element, proposed, hint)
+            if rejection ~= nil then
+                error(rejection, 0)
+            end
         end
 
-        -- Rebuild every binding so a replaced handler does not leave its predecessor connected.
+        bound = proposed
+
+        --[[
+            Every element has already said yes, so nothing below can raise and leave a maid
+            cleaned but unfilled. Rebuilt rather than added to, so a replaced handler does not
+            leave its predecessor connected alongside it.
+        ]]
         for element, binding in bindings do
             binding:Clean()
             Adapters.bind(registry, element, bound, binding, hint)
