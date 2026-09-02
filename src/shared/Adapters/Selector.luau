@@ -22,6 +22,7 @@
 local CollectionService = game:GetService("CollectionService")
 
 local Constants = require(script.Parent.Parent.Constants)
+local Presets = require(script.Parent.Parent.Presets)
 local Resolver = require(script.Parent.Parent.Util.Resolver)
 local Types = require(script.Parent.Parent.Types)
 
@@ -75,6 +76,31 @@ function Selector.ancestorChain(instance: Instance): { Instance }
     return chain
 end
 
+--[[
+    The group a preset supplies, if the element names one.
+
+    This mirrors the middle layer of `Elements`' resolution. Without it a preset could set
+    `element.Group` while `Query({ Group = ... })` quietly failed to match the same element --
+    two answers to one question, which is the kind of bug nobody finds by reading.
+]]
+local function presetGroup(instance: Instance): string?
+    local name = instance:GetAttribute(Constants.Attributes.Preset)
+    if typeof(name) ~= "string" or #name == 0 then
+        return nil
+    end
+
+    local preset = Presets.Get(name)
+    if preset == nil then
+        return nil
+    end
+
+    local group = preset[Constants.Attributes.Group]
+    if typeof(group) == "string" and #group > 0 then
+        return group
+    end
+    return nil
+end
+
 local function readGroup(instance: Instance): string?
     local group = instance:GetAttribute(Constants.Attributes.Group)
     if typeof(group) == "string" and #group > 0 then
@@ -98,6 +124,11 @@ function Selector.groupOf(instance: Instance): string?
     local own = readGroup(instance)
     if own ~= nil then
         return own
+    end
+
+    local fromPreset = presetGroup(instance)
+    if fromPreset ~= nil then
+        return fromPreset
     end
 
     for _, ancestor in Selector.ancestorChain(instance) do
@@ -175,6 +206,8 @@ function Selector.triggers(compiled: Types.CompiledSelector): ({ string }, { str
     end
     if compiled.Group ~= nil then
         table.insert(attributes, Constants.Attributes.Group)
+        -- A preset can supply the group, so swapping presets can move an element in or out.
+        table.insert(attributes, Constants.Attributes.Preset)
     end
 
     return properties, attributes

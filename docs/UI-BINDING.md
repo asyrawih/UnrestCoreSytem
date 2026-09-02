@@ -188,11 +188,12 @@ ancestor that sets `UnrestGroup` tomorrow has to win the moment it does. The con
 off the element's own maid and are torn down and rebuilt on every re-resolution, so a
 reparented element holds connections to its new ancestors only.
 
-> **Queries still match on the element's own `UnrestGroup`.** `Descriptor.Group` goes through
-> `Selector.groupOf`, which reads the instance and does not walk. So an element that only
-> *inherits* `MainMenu` reports `element.Group == "MainMenu"` but is **not** matched by
-> `Unrest:Query({ Group = "MainMenu" })`. Keep `UnrestGroup` on the elements a query selects
-> by group, and use inheritance for the rest.
+> **Queries see inherited groups.** `Descriptor.Group` goes through `Selector.groupOf`, which
+> reads the element, then its preset, then walks the same ancestor chain. So `UnrestGroup`
+> written once on a ScreenGui is enough for `Unrest:Query({ Group = "MainMenu" })` to select
+> everything under it. `Selector.ancestorChain` is the single definition of that walk --
+> `Elements` resolves with it and `Query` watches the chain it returns, so the two cannot
+> disagree about which ancestors count.
 
 ### An attribute grants no privilege
 

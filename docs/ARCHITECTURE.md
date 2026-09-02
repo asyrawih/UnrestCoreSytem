@@ -147,7 +147,8 @@ src/shared/            ReplicatedStorage.Unrest  — replicated, assume every cl
   Bridge/init.luau     publish/subscribe, dispatch/invoke, network routing
   Net/                 Types, Contracts, Client, Validate — public knowledge only
   Adapters/            registry, per-class adapters, selector, query engine
-  Elements.luau        adoption of tagged Studio UI (client-only at runtime)
+  Presets.luau         named attribute bundles a designer reaches for by name
+  Elements/init.luau   adoption of tagged Studio UI (client-only at runtime)
 
 src/server/            ServerScriptService.UnrestServer — never replicated
   init.server.luau     bootstrap
