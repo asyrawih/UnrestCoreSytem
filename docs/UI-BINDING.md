@@ -40,6 +40,90 @@ Adoption is **client-only**. A tagged ScreenGui exists on the server too, but bi
 events there would be misleading: a UI event is a *request*, and the authority is the
 command contract the request lands on — never the button.
 
+### The tag cascades
+
+Tagging an instance manages that instance **and every `GuiObject` under it**. A screen is
+opted in by tagging its container once, not by tagging forty buttons:
+
+```
+ScreenGui  ← tag "Unrest" here, once
+└── Frame                     managed
+    ├── UIListLayout          not managed — see below
+    ├── TextButton "Play"     managed
+    ├── TextButton "Stop"     managed
+    └── TextLabel  "Now"      managed
+```
+
+Tag a single button and you still get a single button, because a button rarely has
+GuiObject children. It is one rule and it reads correctly both ways.
+
+Everything else in this document is unchanged by that. A cascaded element is an element:
+it resolves an adapter, it reads its own `Unrest*` attributes, it inherits the ones that
+are inheritable, and `Unrest:Query({ Tag = "Unrest", ... })` finds it. There is no second
+class of adoption.
+
+**Only `GuiObject` descendants are swept up.** A `UIListLayout`, `UIPadding`, `UICorner` or
+`UIStroke` under a tagged Frame is left alone. They carry no events and exist to lay other
+things out, so adopting them would be noise in `All()` and in every query. Tagging one
+yourself still adopts it — that is how you bind a channel to a `UIStroke.Color`, and it
+keeps working exactly as before.
+
+### `UnrestIgnore` — the way back out
+
+| | |
+| --- | --- |
+| `UnrestIgnore` | `true` |
+
+Set it on any instance and the cascade stops there: that instance and everything under it
+are released, and nothing under it is adopted. It is the escape hatch for the one
+decorative subtree inside an otherwise managed screen.
+
+```
+ScreenGui  ← tag "Unrest"
+├── Buttons              managed
+│   └── TextButton       managed
+└── Decor                UnrestIgnore = true → released
+    ├── ImageLabel       not managed
+    └── Frame            not managed
+```
+
+It is **live in both directions**. Ticking the checkbox in Studio while the game runs
+releases the subtree; clearing it adopts the subtree back. Nothing restarts.
+
+Three details worth knowing:
+
+* It must be the **boolean** `true`. The one attribute that removes elements from the
+  framework is not the one attribute that guesses at `"true"` typed into a string.
+* **A tag beats it.** `UnrestIgnore` opts a subtree out of a *cascade*, so tagging one
+  instance inside an ignored subtree adopts that instance anyway — including a `UIStroke`
+  you want a channel bound to.
+* An instance that is both tagged **and** ignored manages itself and stops the cascade
+  below it. Both attributes still mean exactly what they say.
+
+### What is live, and what it costs
+
+| Edit | Result |
+| --- | --- |
+| tag a container | it and every GuiObject under it are adopted, immediately |
+| untag it | they are released — unless a second tagged ancestor, or their own tag, still covers them |
+| parent a GuiObject into a managed subtree | adopted on arrival |
+| parent one out | released, unless something still covers it where it landed |
+| set `UnrestIgnore` | that subtree is released |
+| clear `UnrestIgnore` | that subtree is adopted back |
+
+Nested tags do not fight. An element covered by two tagged ancestors stays managed until
+both are gone, because coverage is **re-derived** on every change rather than counted:
+whatever happened, the framework asks `Selector.isManaged` again. There is no reference
+count to decrement in the wrong order.
+
+The connection budget is deliberately shallow — one `DescendantAdded` per tagged **root**,
+never one per descendant. Departures are not watched on the root at all: every adopted
+element already watches its own `AncestryChanged`, which fires *after* a move with the
+final parent in place, so the question it re-asks has a true answer. The only other
+watches are one `UnrestIgnore` per adopted element (which already carries a maid) and one
+per *gate* — an instance carrying `UnrestIgnore`, or a Folder the cascade descends through.
+There is a handful of those in a screen rather than one per `UICorner`.
+
 ---
 
 ## 2. Attribute reference
@@ -58,6 +142,7 @@ queryable; it simply does nothing on its own.
 | `UnrestFormat` | string | Template applied to the channel value. `{value}` is the hole. |
 | `UnrestCooldown` | number | Client-side debounce, in seconds, between activations. **Advisory only.** |
 | `UnrestPreset` | string | Names a bundle in `Presets.luau` that expands into several of the attributes above. |
+| `UnrestIgnore` | boolean | `true` opts this instance and its whole subtree back out of a cascading tag. Structural, not wiring: it never joins the merge below. |
 
 Changing one on the element re-wires **that element only**, live, through
 `GetAttributeChangedSignal`. Editing `UnrestFormat` in Studio while the game runs repaints
@@ -188,12 +273,29 @@ ancestor that sets `UnrestGroup` tomorrow has to win the moment it does. The con
 off the element's own maid and are torn down and rebuilt on every re-resolution, so a
 reparented element holds connections to its new ancestors only.
 
+> **The cascade multiplies inheritance.** `UnrestGroup` on a ScreenGui now reaches every
+> GuiObject under it rather than only the ones you tagged, which is the point. `UnrestPreset`
+> reaches them too, and a preset carrying `UnrestCommand` would arm the lot — so put a preset
+> that expands into a command on the elements that have that intent, and keep the ancestor for
+> the ones that are genuinely house style. You will hear about it either way: a preset that
+> arms a `TextLabel` warns that `Active` cannot bind to it, naming the element.
+
 > **Queries see inherited groups.** `Descriptor.Group` goes through `Selector.groupOf`, which
 > reads the element, then its preset, then walks the same ancestor chain. So `UnrestGroup`
 > written once on a ScreenGui is enough for `Unrest:Query({ Group = "MainMenu" })` to select
 > everything under it. `Selector.ancestorChain` is the single definition of that walk --
 > `Elements` resolves with it and `Query` watches the chain it returns, so the two cannot
 > disagree about which ancestors count.
+>
+> The cascade is defined the same way and for the same reason: `Selector.isManaged` answers
+> "is this managed?", `Selector.cascadeUnder` answers "what is managed under here?", and both
+> `Elements` and `Query` are callers rather than second opinions.
+>
+> One difference between the two walks is deliberate. The inheritance walk stops at the first
+> `LayerCollector`; the cascade walk does not. A group that leaked past a ScreenGui would
+> start selecting elements on unrelated screens, because it is ambient context — whereas a tag
+> was put on one specific container on purpose, and tagging a Folder of ScreenGuis is a thing
+> somebody may well have meant. Neither walk reads a service or the DataModel.
 
 ### An attribute grants no privilege
 
@@ -392,7 +494,7 @@ local toggle = unrest:Query({
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `Tag` | `string?` | CollectionService tag. Drives live binding via `GetInstanceAddedSignal` / `GetInstanceRemovedSignal`. |
+| `Tag` | `string?` | CollectionService tag. Drives live binding via `GetInstanceAddedSignal` / `GetInstanceRemovedSignal`. `"Unrest"` **cascades** — see below. Any other tag is exact. |
 | `Selector` | `string?` | ClassName tested with `:IsA()`. Abstract classes work: `"GuiButton"`, `"GuiObject"`. |
 | `Name` | `string?` | Exact `Instance.Name`. Re-evaluated live on rename. |
 | `Role` | `string?` | `UnrestRole`, **falling back to `Instance.Name`**. Re-evaluated live. |
@@ -403,6 +505,15 @@ local toggle = unrest:Query({
 At least one of `Tag` / `Selector` / `Name` / `Role` / `Group` must be present, and a
 descriptor without a `Tag` must supply an `Ancestor` — a tagless, rootless query would have
 to walk the whole DataModel.
+
+> **`Tag = "Unrest"` selects what the framework manages, not what somebody tagged.** A
+> button adopted by cascade is a button this query finds; `Selector.isManaged` is the single
+> definition of that, and `Elements` adopts with the very same predicate. Sourcing from the
+> raw `GetTagged` list instead would leave cascaded elements adopted, wired, and invisible to
+> the query that asked for them — worse than never adopting them.
+>
+> Only the framework's own tag cascades. `Tag = "Highlighted"` still means exactly the
+> instances carrying that tag: a foreign tag is a label, not an opt-in.
 
 **Prefer `Role` over `Name`.** `Name` is what a designer changes the afternoon after you
 ship; `UnrestRole` is a contract they set deliberately. Because `Role` falls back to the
@@ -434,6 +545,12 @@ that currently matches, each with a maid holding its handler connections.
 
 So an element may join and leave the result set any number of times over its life, and
 `Removed` fires exactly once per departure.
+
+A query sourcing the framework tag adds the cascade's own liveness on top: one
+`DescendantAdded` per tagged root, one `UnrestIgnore` watch per gate, and — per candidate —
+an `AncestryChanged` and an `UnrestIgnore` watch, because those two edits are exactly the
+ones that can move an element in or out of *coverage* rather than out of the filter. A
+descriptor naming any other tag, or an `Ancestor`, pays none of that.
 
 ---
 
@@ -517,7 +634,7 @@ Valid fields: Ancestor, Group, Name, Recursive, Role, Selector, Tag.
 | --- | --- |
 | `src/shared/Adapters/init.luau` | the AdapterRegistry: resolution, flattening, caching, and `Adapters.bind` |
 | `src/shared/Adapters/Types.luau` | the adoption type surface |
-| `src/shared/Adapters/Selector.luau` | descriptor compilation and the match predicate |
+| `src/shared/Adapters/Selector.luau` | descriptor compilation, the match predicate, and the cascade rule (`isManaged` / `cascadeUnder` / `isGate`) |
 | `src/shared/Adapters/Query.luau` | the live query engine |
 | `src/shared/Adapters/Classes/*.luau` | one file per class family |
 | `src/shared/Elements/init.luau` | the ElementManager: adoption, attribute resolution and wiring |

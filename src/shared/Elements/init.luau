@@ -16,6 +16,37 @@
     element owns hangs off one maid, so release is one line and cannot half-happen.
 
     ---------------------------------------------------------------------------
+    The tag cascades
+    ---------------------------------------------------------------------------
+
+    Tagging an instance manages that instance *and* every `GuiObject` under it, so a screen
+    is opted in by tagging its container once rather than by tagging forty buttons. Tag a
+    single button and you still get a single button, because a button rarely has GuiObject
+    children -- one rule, and it reads correctly both ways.
+
+    Only `GuiObject` descendants are swept up. A `UIListLayout`, `UIPadding` or `UIStroke`
+    under a tagged Frame is left alone: it carries no events and exists to lay other things
+    out, so adopting it would be noise. Tagging one yourself still adopts it, which is how a
+    channel gets bound to a `UIStroke.Color`.
+
+    `UnrestIgnore = true` opts an instance and its whole subtree back out, live in both
+    directions, for the one decorative subtree inside an otherwise managed screen.
+
+    The rule itself is not written here. `Selector.isManaged` is the predicate,
+    `Selector.cascadeUnder` the enumeration, and `Query` sources from the same two -- because
+    an element this manager adopted and wired but a query could not find would be worse than
+    an element nobody adopted at all.
+
+    Coverage is re-derived, never counted. Anything that can change it ends at `reconcile`,
+    which asks `Selector` again; an element covered by two tagged ancestors keeps answering
+    yes until both are gone, with no reference count to keep in step with the tree.
+
+    The connection budget, in full: one `DescendantAdded` per tagged root, one
+    `UnrestIgnore` watch per gate (`Selector.isGate`), and -- on adopted elements only, which
+    already carry a maid -- one more `UnrestIgnore` watch each. Nothing is connected to an
+    instance the framework does not manage and could not adopt.
+
+    ---------------------------------------------------------------------------
     Zero-code wiring
     ---------------------------------------------------------------------------
 
@@ -330,6 +361,16 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     local ancestry: { [Instance]: Types.Maid } = {}
     --- Adoption order, so `All()` is stable rather than hash-ordered.
     local order: { Instance } = {}
+    --[[
+        The instances the tag rules brought in -- tagged themselves, or reached by the
+        cascade. A hand `:Adopt`ed instance is absent from here and is never released by them,
+        so "adopts one instance directly, tag or no tag" stays true.
+    ]]
+    local byTag: { [Instance]: true } = {}
+    --- One `DescendantAdded` per tagged root. The whole live half of the cascade.
+    local roots: { [Instance]: Types.Maid } = {}
+    --- `UnrestIgnore` watches on the gates `Selector.isGate` names.
+    local gates: { [Instance]: Types.Maid } = {}
 
     local lifetime = Maid.new()
     local started = false
@@ -474,6 +515,171 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         wireChannel(element, wiringMaid)
     end
 
+    --------------------------------------------------------------------------------
+    -- The cascade
+    --------------------------------------------------------------------------------
+
+    local onIgnoreChanged: (instance: Instance) -> ()
+
+    --[[
+        Watches `UnrestIgnore` on an instance the framework does not manage but whose
+        attribute still decides what it manages underneath -- a Folder the cascade passes
+        through, or the ignored Frame it stopped at. `Selector.isGate` names them.
+
+        Once discovered a gate is kept, even after the tag above it goes away. The set is
+        bounded by the shape of the tree rather than by how often tags are edited, and a gate
+        whose subtree is no longer managed only ever re-asks a question that answers "nothing
+        to do".
+    ]]
+    local function watchGate(instance: Instance): ()
+        if destroyed or gates[instance] ~= nil then
+            return
+        end
+
+        local maid = Maid.new()
+        gates[instance] = maid
+        maid:Add(instance:GetAttributeChangedSignal(ATTRIBUTES.Ignore):Connect(function()
+            onIgnoreChanged(instance)
+        end))
+        maid:Add(instance.Destroying:Connect(function()
+            local watcher = gates[instance]
+            gates[instance] = nil
+            if watcher ~= nil then
+                watcher:Destroy()
+            end
+        end))
+    end
+
+    local function dropGate(instance: Instance): ()
+        local maid = gates[instance]
+        if maid == nil then
+            return
+        end
+        gates[instance] = nil
+        maid:Destroy()
+    end
+
+    --[[
+        Adopts or releases one instance according to `Selector.isManaged`.
+
+        Every path that can change coverage ends here, and coverage is *re-derived* rather
+        than counted. An element under two tagged ancestors is not held by two references: it
+        is asked the question again, and while either ancestor still carries the tag the
+        answer is still yes. Nothing has to be decremented in the right order, and no counter
+        can drift out of step with the tree it describes.
+    ]]
+    local function reconcile(instance: Instance): ()
+        if destroyed then
+            return
+        end
+
+        if Selector.isManaged(instance) then
+            if typed:Adopt(instance) ~= nil then
+                byTag[instance] = true
+            end
+        elseif byTag[instance] then
+            typed:Release(instance)
+        end
+    end
+
+    --- Adopts everything the cascade reaches under `root`, and watches the gates it reports.
+    local function sweep(root: Instance): ()
+        local cascaded, gated = Selector.cascadeUnder(root)
+        for _, instance in cascaded do
+            reconcile(instance)
+        end
+        for _, instance in gated do
+            watchGate(instance)
+        end
+    end
+
+    --[[
+        Re-asks the question for everything managed at or under `root`. Only releases can come
+        of it: nothing is adopted by a tag going away or by an `UnrestIgnore` appearing. The
+        managed set is walked rather than the tree, so untagging a ScreenGui costs the elements
+        it adopted and not the instances it contains.
+    ]]
+    local function reconcileUnder(root: Instance): ()
+        reconcile(root)
+        for _, instance in table.clone(order) do
+            if instance ~= root and instance:IsDescendantOf(root) then
+                reconcile(instance)
+            end
+        end
+    end
+
+    --[[
+        `UnrestIgnore` went on or came off. Both directions are the same two steps -- release
+        what is now excluded, adopt what is no longer excluded -- because one of them is always
+        a no-op and neither needs to know which way the edit went.
+    ]]
+    function onIgnoreChanged(instance: Instance): ()
+        if destroyed then
+            return
+        end
+
+        -- Something must stay attached across the release, or the edit that clears the
+        -- attribute again would have nobody left listening for it.
+        watchGate(instance)
+
+        reconcileUnder(instance)
+        sweep(instance)
+
+        if managed[instance] ~= nil then
+            -- Adopted again: its own adoption maid carries the watch from here.
+            dropGate(instance)
+        end
+    end
+
+    --[[
+        One `DescendantAdded` per tagged root, and nothing per descendant. A GuiObject parented
+        into a managed subtree is adopted on arrival -- and so is every GuiObject of a whole
+        panel parented in at once, because the signal fires once for each of them.
+
+        There is deliberately no `DescendantRemoving`. Leaving is the element's own news: every
+        adopted element already watches `AncestryChanged`, which fires *after* the move with
+        the final parent in place, so the question it re-asks has a true answer.
+        `DescendantRemoving` fires while the element is still where it was and could only ask
+        the question one step too early.
+    ]]
+    local function addRoot(root: Instance): ()
+        if destroyed or roots[root] ~= nil then
+            return
+        end
+
+        local maid = Maid.new()
+        roots[root] = maid
+        maid:Add(root.DescendantAdded:Connect(function(instance: Instance)
+            if destroyed then
+                return
+            end
+            for _, gate in Selector.gatesAbove(instance, root) do
+                watchGate(gate)
+            end
+            reconcile(instance)
+        end))
+    end
+
+    local function onTagAdded(root: Instance): ()
+        addRoot(root)
+        reconcile(root)
+        if managed[root] == nil then
+            -- Tagged but not adopted -- no adapter matched its class. Its `UnrestIgnore` still
+            -- decides what the cascade does underneath, and nothing else is watching it.
+            watchGate(root)
+        end
+        sweep(root)
+    end
+
+    local function onTagRemoved(root: Instance): ()
+        local maid = roots[root]
+        if maid ~= nil then
+            roots[root] = nil
+            maid:Destroy()
+        end
+        reconcileUnder(root)
+    end
+
     function manager:Adopt(instance: Instance): Types.ManagedElement?
         if destroyed then
             return nil
@@ -528,13 +734,29 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             end))
         end
         --[[
+            `UnrestIgnore` is structural rather than wiring, so it never joins the merge and
+            never re-resolves anything: it decides whether this element is here at all.
+        ]]
+        adoptionMaid:Add(instance:GetAttributeChangedSignal(ATTRIBUTES.Ignore):Connect(function()
+            onIgnoreChanged(instance)
+        end))
+        --[[
             Moving an element changes which ancestors it inherits from, so the answer has to
             be computed again against the new chain. `AncestryChanged` fires for a move
             anywhere above the element, not only at its own parent, which is exactly the set
             of moves that can change that answer -- dragging a Frame between two ScreenGuis
             re-resolves every managed button inside it.
+
+            It is also the whole release half of the cascade. A move can carry an element out
+            of every managed subtree, and coverage is re-asked before rewiring because
+            resolving an element against ancestors it no longer has is work with a wrong
+            answer at the end of it.
         ]]
         adoptionMaid:Add(instance.AncestryChanged:Connect(function()
+            if byTag[instance] and not Selector.isManaged(instance) then
+                typed:Release(instance)
+                return
+            end
             rewire(element)
         end))
         adoptionMaid:Add(instance.Destroying:Connect(function()
@@ -556,6 +778,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         managed[instance] = nil
         wiring[instance] = nil
         ancestry[instance] = nil
+        byTag[instance] = nil
         local adoptionMaid = adoption[instance]
         adoption[instance] = nil
 
@@ -579,16 +802,18 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         end
         started = true
 
+        --[[
+            A tag arriving adopts the instance and sweeps what is under it; a tag leaving
+            re-asks the question for everything it was holding up, which releases the
+            cascaded elements and leaves alone any still covered by a second tagged ancestor
+            or by a tag of their own.
+        ]]
         local tag = Constants.Tag
-        lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(function(instance: Instance)
-            typed:Adopt(instance)
-        end))
-        lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(function(instance: Instance)
-            typed:Release(instance)
-        end))
+        lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(onTagAdded))
+        lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(onTagRemoved))
 
         for _, instance in CollectionService:GetTagged(tag) do
-            typed:Adopt(instance)
+            onTagAdded(instance)
         end
     end
 
@@ -628,6 +853,16 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             typed:Release(instance)
         end
         table.clear(order)
+        table.clear(byTag)
+
+        for _, maid in roots do
+            maid:Destroy()
+        end
+        table.clear(roots)
+        for _, maid in gates do
+            maid:Destroy()
+        end
+        table.clear(gates)
 
         lifetime:Destroy()
     end

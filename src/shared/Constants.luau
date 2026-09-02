@@ -13,9 +13,20 @@ local Constants = {
         The CollectionService tag that hands an instance to the framework.
 
         UI is built in Studio, by hand. The framework creates none of it. Tagging an
-        instance `Unrest` is the whole opt-in: from that moment the element is adopted,
-        an adapter is resolved for its ClassName, its `Unrest*` attributes are wired, and
-        it becomes visible to `Unrest:Query`. Removing the tag releases it cleanly.
+        instance `Unrest` is the whole opt-in: from that moment it is adopted, an adapter is
+        resolved for its ClassName, its `Unrest*` attributes are wired, and it becomes
+        visible to `Unrest:Query`. Removing the tag releases it cleanly.
+
+        The tag cascades. Tagging a Frame manages that Frame *and* every `GuiObject` under
+        it, so a screen is opted in by tagging its container once rather than by tagging
+        forty buttons. Tag a single button and you get a single button, because a button
+        rarely has GuiObject children -- the same rule reads both ways.
+
+        Non-visual children are not swept up: a `UIListLayout` or `UICorner` under a tagged
+        Frame is left alone unless you tag it yourself. They carry no events and exist to
+        lay other things out, so adopting them would be noise.
+
+        `UnrestIgnore = true` on any instance opts it and its descendants back out.
     ]]
     Tag = "Unrest",
 
@@ -47,6 +58,12 @@ local Constants = {
         --- Names an entry in `Presets.luau`, which expands into several of the attributes
         --- above. One attribute instead of five, defined once and reused.
         Preset = "UnrestPreset",
+        --[[
+            Opts an instance and everything under it back out of a cascading tag. The escape
+            hatch for the one decorative subtree inside an otherwise managed screen; set it
+            to `true`.
+        ]]
+        Ignore = "UnrestIgnore",
     }),
 
     --[[

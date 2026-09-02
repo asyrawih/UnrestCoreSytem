@@ -6,10 +6,15 @@
     screen. This is a wiring aid, not part of the framework: it answers the two questions you
     actually have while building a screen.
 
-      * Did the framework see my element, and what did it read off it? Every adoption prints
-        the class, the adapter that claimed it, the role, the group, and the wiring
-        attributes as *resolved* -- so a value arriving from a preset or inherited from the
-        ScreenGui shows up here even though the element itself carries nothing.
+      * Did the framework see my element, and what did it read off it? An adoption prints the
+        class, the adapter that claimed it, the role, the group, and the wiring attributes as
+        *resolved* -- so a value arriving from a preset or inherited from the ScreenGui shows
+        up here even though the element itself carries nothing.
+
+        Only elements that carry wiring get a line. Since the tag cascades, a tagged screen
+        adopts every GuiObject under it, and printing a line for each would bury the six that
+        actually do something under forty that only sit there. The rest are counted and
+        reported on one line, which answers "did it see them" without the wall of text.
       * Is anything tagged at all? If nothing is adopted shortly after start, it says so, at
         length, because the alternative is a silent screen and no idea why.
 
@@ -41,6 +46,17 @@ local WIRING = { "Preset", "Command", "Payload", "Channel", "Bind", "Format", "C
     and the format it resolved to, so "my attribute is wrong" and "my tag is missing" stop
     looking identical from the output window.
 ]]
+--- Whether this element carries any wiring at all, resolved from every layer.
+local function hasWiring(element: Types.ManagedElement): boolean
+    for _, name in WIRING do
+        local attribute = (Constants.Attributes :: { [string]: string })[name]
+        if element.Attributes[attribute] ~= nil then
+            return true
+        end
+    end
+    return false
+end
+
 local function describeAttributes(element: Types.ManagedElement): string
     local parts: { string } = {}
 
@@ -67,7 +83,48 @@ end
     the already-adopted set is replayed here rather than assumed empty.
 ]]
 return function(unrest: Types.Unrest): () -> ()
+    --[[
+        Unwired adoptions are counted rather than printed, and the count is flushed once the
+        sweep goes quiet. A screen adopts in a burst, so debouncing collapses one burst into
+        one line instead of guessing at a fixed delay.
+    ]]
+    local quiet = 0
+    local pending = 0
+    local flushing = false
+
+    local function flush(): ()
+        if pending == 0 then
+            return
+        end
+        print(`[Unrest] adopted {pending} more element(s) with no wiring attributes -- queryable, nothing more`)
+        pending = 0
+    end
+
+    local function scheduleFlush(): ()
+        quiet += 1
+        if flushing then
+            return
+        end
+        flushing = true
+
+        task.spawn(function()
+            local seen = -1
+            while seen ~= quiet do
+                seen = quiet
+                task.wait(0.25)
+            end
+            flushing = false
+            flush()
+        end)
+    end
+
     local function report(element: Types.ManagedElement): ()
+        if not hasWiring(element) then
+            pending += 1
+            scheduleFlush()
+            return
+        end
+
         local group = if element.Group ~= nil then ` group "{element.Group}"` else ""
         print(
             `[Unrest] adopted {element.Instance:GetFullName()} `
@@ -78,7 +135,10 @@ return function(unrest: Types.Unrest): () -> ()
 
     local added = unrest.Elements.ManagedAdded:Connect(report)
     local removed = unrest.Elements.ManagedRemoved:Connect(function(element: Types.ManagedElement)
-        print(`[Unrest] released {element.Instance.Name} (role "{element.Role}")`)
+        -- Same reasoning as adoption: a screen being torn down releases everything at once.
+        if hasWiring(element) then
+            print(`[Unrest] released {element.Instance.Name} (role "{element.Role}")`)
+        end
     end)
 
     for _, element in unrest.Elements:All() do
