@@ -19,11 +19,12 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-require(ReplicatedStorage.Game) -- 1. declares this game's contracts and presets
 local Unrest = require(ReplicatedStorage.Unrest)
 
 --- With ByteNet installed, the wire is chosen here, before `:Start()`:
---- `Unrest:UseTransport(require(ReplicatedStorage.Game.Transport))`. Absent that, remotes.
+--- `Unrest:UseTransport(require(ReplicatedStorage.GameTransport.Transport))`. Absent that, remotes.
 Unrest:Register(require(script.Systems.Greeter)) -- 2. register systems
+
 local unrest = Unrest:Start() -- 3. Init then Start; every handler is now registered
+
 unrest:OpenGateway() -- 4. the remotes appear; only now can a client speak

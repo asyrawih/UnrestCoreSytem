@@ -2,80 +2,43 @@
 --[[
     Game / Presets
 
-    A preset is a named bundle of wiring attributes. In Studio a designer writes one
-    attribute:
+    Preset adalah bundel atribut yang dipanggil dengan satu nama dari Studio. Alih-alih
+    menulis lima atribut di setiap tombol, seorang desainer menulis satu:
 
-        UnrestPreset = "MusicToggle"
+        UnrestPreset = "TombolUtama"
 
-    and the ElementManager expands it into the five that bundle stands for. The point is not
-    brevity for its own sake -- it is that "what a music toggle is" gets decided once, in code,
-    under review, instead of being retyped on every button and drifting.
+    Gunanya bukan sekadar mempersingkat ketikan. Yang dipersingkat itu efek sampingnya. Yang
+    sebenarnya didapat adalah "apa itu tombol utama" diputuskan sekali, di kode yang bisa
+    ditelaah, bukan diketik ulang di tiap tombol lalu perlahan melenceng satu sama lain.
 
-    Precedence, most specific wins:
+    BERKAS INI BOLEH KOSONG. Framework tidak mengirim satu preset pun, dan sebuah game bisa
+    berjalan penuh tanpa mendaftarkan apa pun di sini. Isi berkas ini kalau kamu mendapati
+    dirimu mengetik kumpulan atribut yang sama berulang kali.
 
-        the element's own attribute  >  its preset  >  the nearest ancestor's inheritable one
+    Preset adalah nilai bawaan, bukan penimpa. Atribut yang ditulis langsung di elemen selalu
+    menang atas preset, sehingga satu tombol bisa memakai preset yang sama lalu menyimpang di
+    satu hal saja.
 
-    So a preset is a default, never an override: set `UnrestPayload = "Dancefloor"` on one
-    button using `MusicToggle` and that button plays Dancefloor while the rest play Lobby.
-
-    Registering is a side effect of requiring, exactly as it is for the contracts next door.
-    The framework ships `Presets.Register` and an empty table; which presets exist is a
-    property of this game, so the list lives here.
-
-    A preset naming a command the contracts do not declare is still refused at dispatch -- a
-    preset is a shorthand, not a privilege.
+    Dan preset tidak memberi hak istimewa apa pun. `UnrestCommand` yang datang dari preset
+    melewati gerbang yang sama dengan yang diketik tangan.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Constants = require(ReplicatedStorage.Unrest.Constants)
-local Names = require(script.Parent.Names)
 local Presets = require(ReplicatedStorage.Unrest.Presets)
 
-local ATTRIBUTES = Constants.Attributes
-local CHANNELS = Names.Channels
-local COMMANDS = Names.Commands
-
---- A button that starts a track and shows what is playing.
-Presets.Register("MusicToggle", {
-    [ATTRIBUTES.Command] = COMMANDS.MusicPlay,
-    [ATTRIBUTES.Payload] = "Lobby",
-    [ATTRIBUTES.Channel] = CHANNELS.NowPlaying,
-    [ATTRIBUTES.Bind] = "Text",
-    [ATTRIBUTES.Format] = "Music: {value}",
-})
-
---- A label that follows the current track and nothing else.
-Presets.Register("NowPlayingLabel", {
-    [ATTRIBUTES.Channel] = CHANNELS.NowPlaying,
-    [ATTRIBUTES.Bind] = "Text",
-    [ATTRIBUTES.Format] = "Now playing: {value}",
-})
-
---- A button that stops the music.
-Presets.Register("MusicStop", {
-    [ATTRIBUTES.Command] = COMMANDS.MusicStop,
-})
-
 --[[
-    A volume button. `UnrestPayload` is deliberately absent: the amount is the one thing that
-    differs between two otherwise identical buttons, so it stays on the element.
+    Contoh, sengaja dikomentari. Buka komentarnya dan sesuaikan, atau hapus seluruh blok ini.
+
+    Nama perintah dan channel di dalam sebuah preset harus yang sudah dideklarasikan di
+    `Contracts.luau`, kalau tidak dispatch-nya akan ditolak gerbang seperti biasa.
 ]]
-Presets.Register("VolumeButton", {
-    [ATTRIBUTES.Command] = COMMANDS.MusicSetVolume,
-})
 
---- A button that plays a dance. Set `UnrestPayload` to the dance name.
-Presets.Register("DanceButton", {
-    [ATTRIBUTES.Command] = COMMANDS.DancePlay,
-    [ATTRIBUTES.Cooldown] = 0.5,
-})
+-- Presets.Register("TombolUtama", {
+--     UnrestCommand = "Music.Play",
+--     UnrestPayload = "Lobby",
+-- })
 
---- A button that stops the current dance.
-Presets.Register("DanceStop", {
-    [ATTRIBUTES.Command] = COMMANDS.DanceStop,
-})
-
---- Registering is the point; read the registry back through `ReplicatedStorage.Unrest.Presets`
---- (`Presets.Get`, `Presets.List`) rather than through this module.
-return table.freeze({})
+--- Dikembalikan supaya kode game bisa mendaftarkan preset belakangan, misalnya preset yang
+--- namanya baru diketahui saat runtime.
+return Presets
