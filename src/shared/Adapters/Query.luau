@@ -73,6 +73,7 @@ function Query.new(
     local bound: Types.Handlers = if handlers ~= nil then Resolver.Handlers(handlers) else {}
 
     local watchedProperties, watchedAttributes = Selector.triggers(compiled)
+    local ancestorAttributes = Selector.ancestorTriggers(compiled)
     local watchesAncestors = Selector.watchesAncestors(compiled)
     local hint = `Narrow the query {compiled.Text} with a Selector or a Role, or drop that handler.`
 
@@ -171,6 +172,11 @@ function Query.new(
         itself. The whole chain is watched, not only the ancestor supplying a value today: a
         nearer one that sets `UnrestGroup` tomorrow takes precedence the moment it does.
 
+        `Selector.ancestorTriggers` says which attributes those are, so this watches every
+        inheritable input to the answer rather than only the one the filter names -- an
+        `UnrestPreset` on a ScreenGui can supply the group, and swapping it has to move the
+        elements underneath the same way editing `UnrestGroup` there does.
+
         Rebuilt under a keyed maid slot, so reparenting drops the previous chain outright
         rather than accumulating connections to ancestors the element no longer has.
     ]]
@@ -179,9 +185,11 @@ function Query.new(
         watcher:Add(chain, "ancestry")
 
         for _, ancestor in Selector.ancestorChain(element) do
-            chain:Add(ancestor:GetAttributeChangedSignal(Constants.Attributes.Group):Connect(function()
-                evaluate(element)
-            end))
+            for _, attribute in ancestorAttributes do
+                chain:Add(ancestor:GetAttributeChangedSignal(attribute):Connect(function()
+                    evaluate(element)
+                end))
+            end
         end
     end
 

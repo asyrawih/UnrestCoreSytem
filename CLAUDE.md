@@ -54,11 +54,26 @@ per-element intent — inheriting a command would silently arm every descendant 
 The ancestor walk stops at the first `LayerCollector` (inclusive) and never reads a service
 or the DataModel.
 
-`Descriptor.Group` matching sees inherited groups. `Selector.groupOf` reads the element, then
-walks the same chain, so `UnrestGroup` written once on a ScreenGui is enough for
+The precedence itself is one function: **`Selector.attributeOf(instance, name)`** returns the
+value and an `AttributeSource`, applying own > preset > nearest ancestor (that last layer only
+for `Constants.Inheritable`; `UnrestPreset` skips the preset layer). `Elements.resolve` asks it
+for every key of `element.Attributes`, and `Selector.groupOf` asks it for `UnrestGroup` — so
+what the framework reports about an element and what a query matches on cannot come apart.
+It builds on two helpers in the same module: `Selector.inheritedProviders(instance, names)`
+(nearest ancestor per name) and `Selector.presetFor(instance)` (the preset name, its bundle and
+where the name was typed — own beating inherited).
+
+`Descriptor.Group` matching therefore sees inherited groups, including a group a preset on a
+ScreenGui supplies: `UnrestGroup` written once up there is enough for
 `Unrest:Query({ Group = ... })` to select everything under it. `Selector.ancestorChain` is the
-single definition of that walk — `Elements` resolves with it and `Query` watches the chain it
-returns, so the two cannot disagree about which ancestors count.
+single definition of the walk — `Selector.inheritedProviders` reads with it, `Elements` watches
+the chain it returns, and `Query` watches it too, so none of them can disagree about which
+ancestors count.
+
+Liveness on the chain is `Selector.ancestorTriggers(compiled)`: the inheritable subset of
+`Selector.triggers`, derived rather than restated. A `Group` filter therefore watches both
+`UnrestGroup` and `UnrestPreset` on every ancestor, because either can change the answer.
+`Selector.watchesAncestors` is answered from the same list.
 
 `Selector.roleOf` deliberately does **not** walk: a role is identity, and inheriting one would
 give every descendant of a panel the same name.

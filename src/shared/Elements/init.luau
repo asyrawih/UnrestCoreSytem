@@ -72,16 +72,21 @@
     Resolution: three layers, most specific wins
     ---------------------------------------------------------------------------
 
-    `element.Attributes` is not a copy of the instance's attributes any more. It is the
-    result of merging three layers, weakest first:
+    `element.Attributes` is not a copy of the instance's attributes any more. Every key is
+    resolved through three layers, most specific winning:
 
-        3. inheritance -- the nearest ancestor that sets one of `Constants.Inheritable`;
+        1. the element -- whatever the designer set on this instance (strongest);
         2. the preset  -- the bundle named by `UnrestPreset`, from `Presets.luau`;
-        1. the element -- whatever the designer set on this instance.
+        3. inheritance -- the nearest ancestor that sets one of `Constants.Inheritable`.
 
     So a preset is a default and never an override, and an ancestor is a fallback and never
     a mandate. `element.Sources` records which layer won each key, so "who set this?" has an
     answer without reading three places in Studio.
+
+    That precedence is **not written here**. It is `Selector.attributeOf`, and `Selector` asks
+    the same function when it decides what `Query({ Group = ... })` matches. It used to be
+    written in both places, and the two drifted: a preset inherited from a ScreenGui expanded
+    here into an `element.Group` no query could find. One function, one answer.
 
     Only the three names in `Constants.Inheritable` are ever inherited, because the rule is
     *inherit context, never intent*. `UnrestGroup` says which screen an element is on and
@@ -90,9 +95,9 @@
     same command. Role, command, payload, channel, bind and format are therefore per-element
     and stay that way.
 
-    The walk stops at the first `LayerCollector` -- a screen is the widest thing an
-    inheritable attribute is allowed to mean -- and never reads a service or the DataModel,
-    because `UnrestGroup` on `Players` would be a global.
+    The walk is `Selector.ancestorChain`. It stops at the first `LayerCollector` -- a screen is
+    the widest thing an inheritable attribute is allowed to mean -- and never reads a service
+    or the DataModel, because `UnrestGroup` on `Players` would be a global.
 
     ---------------------------------------------------------------------------
     Loud vs. fatal
@@ -174,58 +179,27 @@ end
 --------------------------------------------------------------------------------
 
 --[[
-    Where the ancestor walk stops climbing.
+    Watches every ancestor an inheritable attribute could arrive from, so an edit up there
+    re-resolves this element.
 
-    The DataModel and the services hanging off it are never read. An inheritable attribute
-    is meant to say "everything on this screen belongs to MainMenu"; `UnrestGroup` on
-    `Players` or on `StarterGui` would be a global, and a global is the thing this feature
-    is not.
+    `Selector.ancestorChain` decides which ancestors those are -- the walk is defined once,
+    over there, and this used to be a second copy of it with its own `isBoundary` beside it.
+    The two agreed by coincidence rather than by construction, which is precisely how
+    `Elements` came to expand a preset inherited from a ScreenGui that `Query` never saw.
+
+    The whole chain is watched, not only the ancestors that supply a value today: an ancestor
+    nearer than the current provider may set `UnrestGroup` tomorrow and has to win the moment
+    it does, and the current provider may clear it and hand the answer back to somebody
+    further up. The chain is bounded by the first `LayerCollector` and by the service
+    boundary, so the connection count is (chain length x 3) and a screen is the widest it can
+    ever get.
 ]]
-local function isBoundary(instance: Instance): boolean
-    if instance == game then
-        return true
-    end
-    local parent = instance.Parent
-    return parent ~= nil and parent == game
-end
-
---[[
-    Walks up from `instance`, returning the nearest ancestor that sets each inheritable
-    attribute, and watching every ancestor on the way for changes to all three.
-
-    The whole chain is watched, not only the ancestors that supply a value today: an
-    ancestor nearer than the current provider may set `UnrestGroup` tomorrow and has to win
-    the moment it does, and the current provider may clear it and hand the answer back to
-    somebody further up.
-
-    Two things bound the walk, so the connection count is (chain length x 3) and a screen is
-    the widest it can ever get: the first `LayerCollector` (ScreenGui / SurfaceGui /
-    BillboardGui), whose own attributes are read before stopping, and the service boundary.
-]]
-local function collectAncestors(instance: Instance, maid: Types.Maid, onChanged: () -> ()): { [string]: Instance }
-    local providers: { [string]: Instance } = {}
-
-    local current: Instance? = instance.Parent
-    while current ~= nil do
-        local ancestor: Instance = current
-        if isBoundary(ancestor) then
-            break
-        end
-
+local function watchAncestors(instance: Instance, maid: Types.Maid, onChanged: () -> ()): ()
+    for _, ancestor in Selector.ancestorChain(instance) do
         for _, name in INHERITABLE do
-            if not providers[name] and ancestor:GetAttribute(name) ~= nil then
-                providers[name] = ancestor
-            end
             maid:Add(ancestor:GetAttributeChangedSignal(name):Connect(onChanged))
         end
-
-        if ancestor:IsA("LayerCollector") then
-            break
-        end
-        current = ancestor.Parent
     end
-
-    return providers
 end
 
 --- The declared preset names, or a phrase saying there are none, for the unknown-preset warning.
@@ -238,77 +212,60 @@ local function declaredPresets(): string
 end
 
 --[[
-    Rebuilds `element.Attributes`, `element.Sources` and `element.Preset` from the three
-    layers, and installs this element's watches on the chain above it into `maid`.
+    Rebuilds `element.Attributes`, `element.Sources` and `element.Preset`, and installs this
+    element's watches on the chain above it into `maid`.
 
-    Applied weakest first, so each layer simply overwrites the one before it and the last
-    writer wins: inherited, then preset, then own.
+    Not a merge of three layers any more: every key is asked of `Selector.attributeOf`, which
+    *is* the three layers -- own, then preset, then the nearest ancestor's, most specific
+    winning. `Selector.groupOf` asks the same function, so the group this fills into
+    `element.Attributes` is by construction the group `Query({ Group = ... })` matches on.
+
+    Which keys get asked is the union of the attributes the framework reads and whatever the
+    preset supplies, so a preset carrying a name outside `WATCHED` still lands in
+    `element.Attributes` and still records where it came from.
 ]]
 local function resolve(element: Types.ManagedElement, maid: Types.Maid, onAncestorChanged: () -> ()): ()
     local instance = element.Instance
     local attributes: { [string]: any } = {}
     local sources: { [string]: Types.AttributeSource } = {}
 
-    -- Layer 3: the nearest ancestor that sets each inheritable attribute.
-    local providers = collectAncestors(instance, maid, onAncestorChanged)
-    for name, ancestor in providers do
-        attributes[name] = ancestor:GetAttribute(name)
-        sources[name] = {
-            Origin = "Inherited",
-            Ancestor = ancestor,
-            Text = `inherited from {ancestor.Name} ({ancestor.ClassName})`,
-        }
+    watchAncestors(instance, maid, onAncestorChanged)
+
+    local presetName, preset, presetFrom = Selector.presetFor(instance)
+    element.Preset = if preset ~= nil then presetName else nil
+
+    if presetName ~= nil and preset == nil then
+        --[[
+            Loud, never fatal. A preset name is data typed by somebody who is not watching the
+            output window, and an empty screen is a worse outcome than a warning. The source is
+            named because an inherited preset was typed on an ancestor, and that is where the
+            fix has to go.
+        ]]
+        local where = if presetFrom ~= nil then presetFrom.Text else "set here"
+        warn(
+            `[Unrest.Elements] {instance:GetFullName()} resolves {ATTRIBUTES.Preset} = "{presetName}" `
+                .. `({where}), which is not a declared preset. Declared presets: {declaredPresets()}. `
+                .. `The element was adopted with its own attributes only -- fix the spelling, or declare `
+                .. `it with Presets.Register("{presetName}", ...).`
+        )
     end
 
-    --[[
-        Layer 2: the preset. `UnrestPreset` is itself inheritable, so a whole screen can be
-        given a default bundle from its ScreenGui, but the element's own naming of a preset
-        beats the inherited one -- which is why the own value is read before the expansion
-        rather than with the rest of layer 1.
-    ]]
-    local ownPreset = instance:GetAttribute(ATTRIBUTES.Preset)
-    if ownPreset ~= nil then
-        attributes[ATTRIBUTES.Preset] = ownPreset
-        sources[ATTRIBUTES.Preset] = { Origin = "Own", Text = "set here" }
-    end
-
-    element.Preset = nil
-    local presetName = readString(attributes, ATTRIBUTES.Preset)
-    if presetName ~= nil then
-        local preset = Presets.Get(presetName)
-        if preset == nil then
-            --[[
-                Loud, never fatal. A preset name is data typed by somebody who is not
-                watching the output window, and an empty screen is a worse outcome than a
-                warning. The source is named because an inherited preset was typed on an
-                ancestor, and that is where the fix has to go.
-            ]]
-            local from = sources[ATTRIBUTES.Preset]
-            local where = if from ~= nil then from.Text else "set here"
-            warn(
-                `[Unrest.Elements] {instance:GetFullName()} resolves {ATTRIBUTES.Preset} = "{presetName}" `
-                    .. `({where}), which is not a declared preset. Declared presets: {declaredPresets()}. `
-                    .. `The element was adopted with its own attributes only -- fix the spelling, or declare `
-                    .. `it with Presets.Register("{presetName}", ...).`
-            )
-        else
-            element.Preset = presetName
-            for name, value in preset do
-                -- A preset naming a preset would be a second, invisible level of indirection.
-                if name ~= ATTRIBUTES.Preset then
-                    attributes[name] = value
-                    sources[name] = { Origin = "Preset", Preset = presetName, Text = `from preset "{presetName}"` }
-                end
+    local names: { string } = table.clone(WATCHED)
+    if preset ~= nil then
+        for name in preset do
+            -- A preset naming a preset would be a second, invisible level of indirection, and
+            -- `attributeOf` refuses to read one; asking again here would only warn twice.
+            if name ~= ATTRIBUTES.Preset and table.find(names, name) == nil then
+                table.insert(names, name)
             end
         end
     end
 
-    -- Layer 1: what the designer set on this instance wins outright.
-    for _, name in WATCHED do
-        local value = instance:GetAttribute(name)
-        if value ~= nil then
+    for _, name in names do
+        local value, source = Selector.attributeOf(instance, name)
+        if value ~= nil and source ~= nil then
             attributes[name] = value
-            sources[name] = { Origin = "Own", Text = "set here" }
+            sources[name] = source
         end
     end
 
@@ -509,7 +466,9 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         end)
 
         element.Role = Selector.roleOf(instance)
-        element.Group = readString(element.Attributes, ATTRIBUTES.Group)
+        -- The same call `Query` matches with, and the same call adoption made -- so
+        -- `element.Group` and `Query({ Group = ... })` are one answer, not two.
+        element.Group = Selector.groupOf(instance)
 
         wireCommand(element, wiringMaid)
         wireChannel(element, wiringMaid)

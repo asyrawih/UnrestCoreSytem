@@ -18,10 +18,19 @@
 
     `Group` has no such fallback: an element is in a group only if somebody said so.
 
-    The cascade rule -- which instances the framework tag manages -- is defined here too,
-    for the same reason `ancestorChain` is: `Elements` decides what to adopt and `Query`
-    decides what a descriptor matches, and if those two walked the tree separately a
-    cascaded button would be adopted, wired, and invisible to the query that asked for it.
+    Two rules live here that a reader might expect to find in `Elements`, and both are here
+    for the same reason. `Elements` decides what to adopt and what an element's attributes are
+    worth; `Query` decides what a descriptor matches. Every time one of those questions has
+    been answered in two places, the two answers have drifted -- so:
+
+        the cascade      -- `isManaged` / `cascadeUnder` / `isGate`, which instances the tag
+                            manages, or a cascaded button is adopted, wired, and invisible to
+                            the query that asked for it;
+        the resolution   -- `ancestorChain` / `inheritedProviders` / `presetFor` /
+                            `attributeOf`, what an attribute is worth, or the framework reports
+                            a group on an element that no query can find.
+
+    `Elements` and `Query` are callers of both. Neither holds a second opinion.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -32,6 +41,11 @@ local Resolver = require(script.Parent.Parent.Util.Resolver)
 local Types = require(script.Parent.Parent.Types)
 
 local Selector = {}
+
+local ATTRIBUTES = Constants.Attributes
+
+--- `Constants.Inheritable` as a lookup. Cast once here rather than at every read site.
+local INHERITABLE: { [string]: boolean } = (Constants.Inheritable :: any) :: { [string]: boolean }
 
 --- `UnrestRole`, or the instance's name when the attribute is not set.
 function Selector.roleOf(instance: Instance): string
@@ -87,6 +101,134 @@ function Selector.ancestorChain(instance: Instance): { Instance }
     end
 
     return chain
+end
+
+--------------------------------------------------------------------------------
+-- Attribute resolution
+--------------------------------------------------------------------------------
+
+--[[
+    One question, one answer: *what is attribute X worth on this instance?*
+
+    `Elements` asks it to build `element.Attributes`, `Selector` asks it to decide what a
+    descriptor matches. It used to be answered twice -- `Elements` merged three layers while
+    `Selector` read the instance -- and the two duly drifted apart, so a preset on a ScreenGui
+    could name a group the framework reported on a button and a query could not find. They
+    call the same functions now, and the precedence lives in exactly one of them.
+
+    Text for `AttributeSource` is built here too. Provenance is a fact about the resolution,
+    and it belongs beside the rule that produced it rather than beside the code that prints it.
+]]
+
+local function ownSource(): Types.AttributeSource
+    return { Origin = "Own", Text = "set here" }
+end
+
+local function presetSource(preset: string): Types.AttributeSource
+    return { Origin = "Preset", Preset = preset, Text = `from preset "{preset}"` }
+end
+
+local function inheritedSource(ancestor: Instance): Types.AttributeSource
+    return {
+        Origin = "Inherited",
+        Ancestor = ancestor,
+        Text = `inherited from {ancestor.Name} ({ancestor.ClassName})`,
+    }
+end
+
+--[[
+    The nearest ancestor that sets each of `names`, found in one pass over `ancestorChain`.
+    A name missing from the result is a name nobody above sets.
+
+    Callers that also have to *watch* the chain walk `ancestorChain` themselves for that --
+    the whole chain is watched, not only today's providers, because a nearer ancestor that
+    sets the attribute tomorrow has to win the moment it does.
+]]
+function Selector.inheritedProviders(instance: Instance, names: { string }): { [string]: Instance }
+    local providers: { [string]: Instance } = {}
+
+    for _, ancestor in Selector.ancestorChain(instance) do
+        for _, name in names do
+            if not providers[name] and ancestor:GetAttribute(name) ~= nil then
+                providers[name] = ancestor
+            end
+        end
+    end
+
+    return providers
+end
+
+local PRESET_ONLY: { string } = { ATTRIBUTES.Preset }
+
+--[[
+    The preset that applies to `instance`: the name it resolves to, the declared bundle under
+    that name, and where the name was written.
+
+    `UnrestPreset` is itself inheritable, so a whole screen can be handed a default bundle from
+    its ScreenGui -- but the element's own naming of a preset beats the inherited one. A preset
+    never names a preset, so this layer reads the attribute and nothing else.
+
+    The name comes back even when nothing is declared under it, and so does its source: a
+    misspelled preset is a warning `Elements` has to be able to write, pointing at the instance
+    the name was actually typed on.
+]]
+function Selector.presetFor(instance: Instance): (string?, Presets.Preset?, Types.AttributeSource?)
+    local name = instance:GetAttribute(ATTRIBUTES.Preset)
+    local source: Types.AttributeSource? = if name ~= nil then ownSource() else nil
+
+    if name == nil then
+        local provider: Instance? = Selector.inheritedProviders(instance, PRESET_ONLY)[ATTRIBUTES.Preset]
+        if provider ~= nil then
+            name = provider:GetAttribute(ATTRIBUTES.Preset)
+            source = inheritedSource(provider)
+        end
+    end
+
+    if typeof(name) ~= "string" or #name == 0 then
+        return nil, nil, source
+    end
+    return name, Presets.Get(name), source
+end
+
+--[[
+    The value of `name` on `instance`, and the layer that supplied it. Most specific wins:
+
+        the element's own attribute  >  its preset's entry  >  the nearest ancestor's
+
+    The last layer applies only to the names in `Constants.Inheritable`, because the rule is
+    *inherit context, never intent*: `UnrestGroup` says which screen an element is on and every
+    element on that screen shares the answer, whereas inheriting `UnrestCommand` would silently
+    arm every descendant of a panel. `UnrestPreset` skips the middle layer -- a preset naming a
+    preset would be a second, invisible level of indirection.
+
+    This is the single definition of that precedence. `Elements` resolves every key of
+    `element.Attributes` through it and `Selector.groupOf` answers with it, so what the
+    framework reports about an element and what a query matches on cannot come apart.
+]]
+function Selector.attributeOf(instance: Instance, name: string): (any, Types.AttributeSource?)
+    local own = instance:GetAttribute(name)
+    if own ~= nil then
+        return own, ownSource()
+    end
+
+    if name ~= ATTRIBUTES.Preset then
+        local presetName, preset = Selector.presetFor(instance)
+        if presetName ~= nil and preset ~= nil then
+            local value = preset[name]
+            if value ~= nil then
+                return value, presetSource(presetName)
+            end
+        end
+    end
+
+    if INHERITABLE[name] then
+        local provider: Instance? = Selector.inheritedProviders(instance, { name })[name]
+        if provider ~= nil then
+            return provider:GetAttribute(name), inheritedSource(provider)
+        end
+    end
+
+    return nil, nil
 end
 
 --------------------------------------------------------------------------------
@@ -286,67 +428,23 @@ function Selector.cascadeUnder(root: Instance): ({ Instance }, { Instance })
 end
 
 --[[
-    The group a preset supplies, if the element names one.
+    `UnrestGroup`, resolved. No fallback to the instance name, on purpose: a group is something
+    a designer states, never something the framework guesses.
 
-    This mirrors the middle layer of `Elements`' resolution. Without it a preset could set
-    `element.Group` while `Query({ Group = ... })` quietly failed to match the same element --
-    two answers to one question, which is the kind of bug nobody finds by reading.
-]]
-local function presetGroup(instance: Instance): string?
-    local name = instance:GetAttribute(Constants.Attributes.Preset)
-    if typeof(name) ~= "string" or #name == 0 then
-        return nil
-    end
+    Every layer of the answer comes from `attributeOf`, which is the same call `Elements` makes
+    when it fills in `element.Attributes` -- so a group supplied by a preset on a ScreenGui is
+    a group `Query({ Group = ... })` finds, and `element.Group` and the query cannot report
+    different things about the same button.
 
-    local preset = Presets.Get(name)
-    if preset == nil then
-        return nil
-    end
-
-    local group = preset[Constants.Attributes.Group]
-    if typeof(group) == "string" and #group > 0 then
-        return group
-    end
-    return nil
-end
-
-local function readGroup(instance: Instance): string?
-    local group = instance:GetAttribute(Constants.Attributes.Group)
-    if typeof(group) == "string" and #group > 0 then
-        return group
-    end
-    return nil
-end
-
---[[
-    `UnrestGroup`, from the element or the nearest ancestor that sets one. No fallback to the
-    instance name, on purpose: a group is something a designer states, never something the
-    framework guesses.
-
-    Inheriting here is what makes the attribute worth having. A group is context -- every
-    element on a screen shares the answer -- so it is written once on the ScreenGui, and
-    `Query({ Group = "MainMenu" })` still selects the lot. `roleOf` deliberately does NOT
-    walk: a role is identity, and inheriting one would give every descendant of a panel the
-    same name.
+    That inheritance is what makes the attribute worth having: a group is context, so it is
+    written once on the ScreenGui and selects the lot. `roleOf` deliberately does NOT walk --
+    a role is identity, and inheriting one would give every descendant of a panel the same name.
 ]]
 function Selector.groupOf(instance: Instance): string?
-    local own = readGroup(instance)
-    if own ~= nil then
-        return own
+    local group = Selector.attributeOf(instance, ATTRIBUTES.Group)
+    if typeof(group) == "string" and #group > 0 then
+        return group
     end
-
-    local fromPreset = presetGroup(instance)
-    if fromPreset ~= nil then
-        return fromPreset
-    end
-
-    for _, ancestor in Selector.ancestorChain(instance) do
-        local inherited = readGroup(ancestor)
-        if inherited ~= nil then
-            return inherited
-        end
-    end
-
     return nil
 end
 
@@ -427,14 +525,39 @@ function Selector.triggers(compiled: Types.CompiledSelector): ({ string }, { str
 end
 
 --[[
+    The same question asked of the chain above the candidate: which attributes, edited on an
+    ancestor, can move this element in or out of the set?
+
+    Exactly the inheritable ones among `triggers` -- derived from that list rather than listed
+    again, so a filter that starts reading a new attribute cannot gain an element watch and
+    quietly miss the ancestor one. Today that is `UnrestGroup` and `UnrestPreset`: a group is
+    inherited, and so is the preset that can supply a group, which is why watching `UnrestGroup`
+    alone left a query stale the moment somebody swapped the preset on a ScreenGui.
+
+    `UnrestRole` never appears here, because a role does not inherit.
+]]
+function Selector.ancestorTriggers(compiled: Types.CompiledSelector): { string }
+    local names: { string } = {}
+
+    local _, attributes = Selector.triggers(compiled)
+    for _, name in attributes do
+        if INHERITABLE[name] then
+            table.insert(names, name)
+        end
+    end
+
+    return names
+end
+
+--[[
     Whether this selector's answer can be changed by an instance other than the candidate.
 
-    Only `Group` inherits, so only `Group` makes a query depend on the chain above each
-    element. A caller that ignores this still matches correctly on the first pass; it just
-    stops being live when a group is edited on a ScreenGui rather than on the element.
+    Answered from `ancestorTriggers`, so "does the chain matter?" and "what is watched on it?"
+    are one decision. A caller that ignores this still matches correctly on the first pass; it
+    just stops being live when a group is edited on a ScreenGui rather than on the element.
 ]]
 function Selector.watchesAncestors(compiled: Types.CompiledSelector): boolean
-    return compiled.Group ~= nil
+    return #Selector.ancestorTriggers(compiled) > 0
 end
 
 --- The predicate. Cheap enough to re-run on every rename, tag change or attribute change.
