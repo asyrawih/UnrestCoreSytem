@@ -127,8 +127,9 @@ Ini bagian "framework hanya menjembatani, pengguna yang mendefinisikan".
 Kontrak perintah mendapat satu field baru yang **framework tidak pernah lihat isinya**:
 
 ```luau
-[Commands.MusicPlay] = {
-    Name = Commands.MusicPlay,
+-- src/game/Contracts.luau -- milik game, bukan framework
+Contracts:Declare({
+    Name = Names.Commands.MusicPlay,
     Realm = "Server",
     AllowClient = true,
     RateLimit = { Count = 4, Window = 1 },
@@ -136,12 +137,15 @@ Kontrak perintah mendapat satu field baru yang **framework tidak pernah lihat is
 
     -- Milik transport. Framework meneruskannya, tidak pernah membacanya.
     Wire = Packets.MusicPlay,
-}
+})
 ```
 
-`Packets.MusicPlay` adalah definisi ByteNet milik pengguna, di file pengguna. Framework
-menyerahkannya ke transport dan tidak tahu apa-apa soal isinya. Transport bawaan mengabaikan
-field itu sepenuhnya.
+**Prasyarat ini sudah terpenuhi, dan bukan oleh proposal ini.** Waktu dokumen ini pertama
+ditulis, kontrak masih berupa tabel statis di dalam framework, sehingga `Wire` berarti framework
+memegang sesuatu milik pengguna. Setelah isi game dikeluarkan, kontrak jadi registry yang diisi
+game lewat `Contracts:Declare`, jadi `Wire` sekarang **milik game secara struktural**, bukan
+karena framework berjanji tidak mengintipnya. Yang tersisa cuma menambahkan field opsional itu
+ke tipe kontrak dan meneruskannya ke transport.
 
 **Kenapa satu tempat, bukan dua.** Godaannya adalah membiarkan pengguna mendefinisikan paket di
 tempat terpisah dan mencocokkannya lewat nama. Itu berarti dua daftar yang harus tetap seiring,
@@ -185,40 +189,44 @@ Pelanggan yang datang terlambat tetap dilayani dari cache framework, bukan dari 
 | `src/shared/Net/Transports/Remotes.luau` | baru: transport bawaan, isinya dipindah dari `Net/init.luau` dan `Net/Client.luau` |
 | `src/shared/Net/Client.luau` | menyusut jadi penjaga kontrak plus panggilan ke transport |
 | `src/server/Net/Server.luau` | gerbangnya tetap; hanya cara permintaan tiba dan cara publish keluar yang lewat transport |
-| `src/shared/Net/Types.luau` | tambah `Wire` di kontrak perintah dan channel |
+| `src/shared/Net/Types.luau` | tambah `Wire` opsional di kontrak perintah dan channel |
+| `src/shared/Net/Contracts.luau` | `Declare` dan `DeclareChannel` meneruskan `Wire` apa adanya, tanpa memeriksanya |
 | `src/shared/init.luau` | terima transport opsional saat konstruksi; bawaannya Remotes |
+| `src/game/Packets.luau` | **milik pengguna**: definisi ByteNet, satu per perintah |
+| `src/game/Transport.luau` | **milik pengguna**: adapter ByteNet yang memenuhi antarmuka Transport |
 
 Transport ByteNet **tidak** ikut framework. Dia contoh di dokumen, atau paket terpisah milik
 pengguna. Framework tidak boleh punya ketergantungan ke ByteNet.
 
 ## 10. Apa lagi yang bisa dipisah
 
-Penilaian awal. Satu agent sedang mengukur ketergantungan nyata antar modul, dan bagian ini
-akan diperbarui dengan angkanya.
+Bagian ini ditulis sebelum survei ketergantungan dijalankan dan sebelum sebagian dikerjakan.
+Keadaan sekarang:
 
-**Yang jelas layak:**
+**Sudah selesai:**
 
-- **`Util/` (Signal, Maid, Resolver)** — tidak bergantung pada apa pun di framework selain tipe.
-  Setiap project Roblox butuh ini.
-- **`Presets.luau` dan isi `Contracts.luau`** — keduanya tabel data. Bentuknya milik framework,
-  isinya milik game. Yang perlu dipisah adalah isinya, dan itu sudah hampir terjadi.
-- **`Diagnostics.luau`** — sudah opsional, dan barusan terbukti: file itu dihapus dan tidak ada
-  yang rusak.
+- **Isi game keluar dari framework.** 71 referensi jadi nol. Kontrak, nama channel dan perintah,
+  preset, dan tipe sistem game semuanya pindah ke `ReplicatedStorage.Game`, sejajar dengan
+  framework, bukan di dalamnya.
+- **Diagnostics dilepas**, dan terbukti bisa dihapus tanpa merusak apa pun.
 
-**Yang perlu dipikir dua kali:**
+**Layak, belum dikerjakan:**
 
-- **`Adapters/`** — kelihatan paling terpisah karena isinya cuma pengetahuan kelas Roblox. Tapi
-  `Elements` dan `Query` sama-sama menanyakan pertanyaan yang jawabannya harus tunggal.
-- **`Core/`** — registry sistem yang secara prinsip tidak tahu apa-apa soal UI dan jaringan.
-  Kandidat kuat, tapi nilainya kecil karena ukurannya memang kecil.
+- **`Primitives` + `Signal` + `Maid` jadi paket daun.** Cukup mengubah dua baris require yang
+  hari ini menunjuk `Types` padahal setiap simbol yang dipakai berasal dari `Primitives`. Itu
+  juga memutus dua siklus yang muncul kalau framework ini dipecah jadi paket Wally.
+- **`Core` berdiri sendiri.** Terverifikasi nol pengetahuan soal UI dan jaringan; satu-satunya
+  kaitan adalah handle opaque yang tidak pernah dibacanya.
+- **`Adapters/Classes` sebagai paket data murni.** 791 baris pengetahuan kelas Roblox dengan nol
+  ketergantungan runtime.
 
-**Yang jangan dipisah:**
+**Jangan dipisah:**
 
-- **`Adapters`, `Elements`, dan `Query` ke paket berbeda.** Codebase ini sudah **dua kali** kena
-  pola bug yang sama: dua tempat menjawab satu pertanyaan dengan cara berbeda, pertama soal grup
-  yang diwarisi dan kedua soal tag yang menurun. Perbaikannya selalu memaksa aturannya tinggal di
-  satu tempat. Memisahkan ketiganya ke balik batas paket membuat pola itu **lebih mungkin**
-  terulang, bukan kurang, karena aturan bersama jadi harus diekspor dan diversikan.
+- **`Adapters`, `Elements`, dan `Query` ke paket berbeda.** 21 simbol melintasi batas, 14 di
+  antaranya predikat aturan bersama. Codebase ini sudah empat kali kena pola satu pertanyaan
+  dijawab dua tempat, dan batas paket berversi menaikkan harga jawaban yang benar. Arah yang
+  tepat berlawanan: kurangi jumlah tempat.
+- **`Util/Resolver`.** Namanya utility, isinya kembar runtime dari tipe framework.
 
 ## 11. Pertanyaan terbuka
 
