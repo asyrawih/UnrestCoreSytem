@@ -1,0 +1,26 @@
+# Rojo sourcemap — regenerated on demand (luau-lsp.nvim rewrites it constantly)
+sourcemap.json
+
+# Wally-installed dependency trees. wally.lock IS tracked (see below) so these
+# are fully reproducible from `wally install`.
+/Packages
+/DevPackages
+/ServerPackages
+
+# Do NOT ignore wally.lock — it pins the resolved dependency graph.
+!wally.lock
+
+# Roblox place / model artifacts
+*.rbxl
+*.rbxlx
+*.rbxl.lock
+*.rbxlx.lock
+*.rbxm
+*.rbxmx
+
+# Build output
+/build
+
+# Misc
+node_modules/
+.DS_Store

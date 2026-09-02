@@ -1,0 +1,9 @@
+[package]
+name = "asyrawih/unrest-core-system"
+version = "0.1.0"
+realm = "shared"
+registry = "https://github.com/UpliftGames/wally-index"
+
+[dependencies]
+
+[dev-dependencies]

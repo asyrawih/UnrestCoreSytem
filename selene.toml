@@ -1,0 +1,25 @@
+# selene 0.31.0 — https://kampfkarren.github.io/selene/
+#
+# `std = "roblox"` works out of the box on 0.31.0: the Roblox standard library
+# is bundled with the binary, so no `roblox.toml` / `roblox.yml` is generated
+# and nothing extra needs to be committed or gitignored. If you ever downgrade
+# selene, run `selene generate-roblox-std` once and commit the result.
+std = "roblox"
+
+[rules]
+# Framework code must never leak into _G / shared.
+global_usage = "deny"
+# Anything assigned without `local` is a bug in a module-based codebase.
+unscoped_variables = "deny"
+
+# Correctness / footguns.
+shadowing = "warn"
+empty_if = "warn"
+manual_table_clone = "warn"
+mixed_table = "warn"
+must_use = "warn"
+deprecated = "warn"
+roblox_incorrect_roact_usage = "warn"
+
+# Layout is stylua's job, not the linter's.
+multiple_statements = "allow"

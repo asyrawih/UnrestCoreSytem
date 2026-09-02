@@ -1,0 +1,9 @@
+# Rokit toolchain manifest — https://github.com/rojo-rbx/rokit
+# Pinned exact versions so every machine/CI gets identical tool behaviour.
+
+[tools]
+rojo = "rojo-rbx/rojo@7.7.0"
+wally = "upliftgames/wally@0.3.2"
+selene = "kampfkarren/selene@0.31.0"
+stylua = "johnnymorganz/stylua@2.5.2"
+luau-lsp = "johnnymorganz/luau-lsp@1.69.0"

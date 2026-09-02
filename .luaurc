@@ -1,0 +1,33 @@
+{
+  "languageMode": "strict",
+  "aliases": {
+    "Unrest": "src/shared",
+    "Server": "src/server",
+    "Client": "src/client",
+    "Packages": "Packages"
+  },
+  "lint": {
+    "UnknownGlobal": true,
+    "DeprecatedGlobal": true,
+    "GlobalUsedAsLocal": true,
+    "LocalShadow": true,
+    "SameLineStatement": true,
+    "MultiLineStatement": true,
+    "LocalUnused": true,
+    "FunctionUnused": true,
+    "ImportUnused": true,
+    "BuiltinGlobalWrite": true,
+    "DuplicateLocal": true,
+    "DuplicateFunction": true,
+    "DuplicateCondition": true,
+    "UnreachableCode": true,
+    "UnknownType": true,
+    "ForRange": true,
+    "TableOperations": true,
+    "MisleadingAndOr": true,
+    "CommentDirective": true,
+    "IntegerParsing": true,
+    "ComparisonPrecedence": true
+  },
+  "lintErrors": false
+}

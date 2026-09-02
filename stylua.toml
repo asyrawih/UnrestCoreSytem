@@ -1,0 +1,15 @@
+# stylua 2.5.2 — https://github.com/JohnnyMorganz/StyLua
+# Roblox/Luau house style. Shares column_width, line endings and quote style
+# with ~/.config/nvim/.stylua.toml; indentation and call parentheses follow the
+# Roblox convention (4 spaces, always parenthesise calls) rather than the
+# Neovim-config convention (2 spaces, no parentheses).
+column_width = 120
+line_endings = "Unix"
+indent_type = "Spaces"
+indent_width = 4
+quote_style = "AutoPreferDouble"
+call_parentheses = "Always"
+collapse_simple_statement = "Never"
+
+[sort_requires]
+enabled = true

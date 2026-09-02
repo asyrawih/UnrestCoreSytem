@@ -1,0 +1,41 @@
+{
+  "name": "UnrestCoreSystem",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+
+      "Unrest": {
+        "$path": "src/shared"
+      },
+
+      "Packages": {
+        "$path": {
+          "optional": "Packages"
+        }
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+
+      "UnrestServer": {
+        "$path": "src/server"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "$ignoreUnknownInstances": true,
+
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+
+        "UnrestClient": {
+          "$path": "src/client"
+        }
+      }
+    }
+  }
+}
