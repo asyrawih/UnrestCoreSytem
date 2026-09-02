@@ -1,0 +1,16 @@
+{
+  "name": "unrestcoresystem-docs",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Documentation site toolchain for UnrestCoreSystem. Not part of the Roblox build - rojo, selene and stylua never look at this file.",
+  "scripts": {
+    "docs:dev": "moonwave dev --code .moonwave/api-pending",
+    "docs:build": "moonwave build --code .moonwave/api-pending",
+    "docs:serve": "python3 -m http.server 4000 --directory build",
+    "docs:dev:api": "moonwave dev --code src",
+    "docs:build:api": "moonwave build --code src"
+  },
+  "devDependencies": {
+    "moonwave": "1.4.2"
+  }
+}

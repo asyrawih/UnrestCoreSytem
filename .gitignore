@@ -19,9 +19,12 @@ sourcemap.json
 *.rbxmx
 .claude
 
-# Build output
-/build
-
 # Misc
-node_modules/
 .DS_Store
+
+# Documentation site (Moonwave -> Docusaurus). See moonwave.toml and package.json.
+# Moonwave keeps its scratch Docusaurus project in the OS cache dir
+# (~/Library/Caches/moonwave/ on macOS), so the only things it puts in this repo
+# are the two below.
+node_modules/
+/build

@@ -1,0 +1,39 @@
+/*
+ * Custom styles for the UnrestCoreSystem docs site.
+ *
+ * The one job this file does that matters: it stamps a status banner on top of every
+ * PROPOSAL-* page. The banner is injected here, in CSS, rather than written into the
+ * Markdown, so the proposal documents themselves stay exactly as their author wrote
+ * them. Docusaurus puts a `docs-doc-id-<ID>` class on the page root, and the doc IDs
+ * of the two proposals both start with `PROPOSAL-`.
+ */
+
+[class*="docs-doc-id-PROPOSAL-"] .theme-doc-markdown::before {
+    content: "PROPOSAL — NOT IMPLEMENTED. Nothing on this page exists in src/. \A USULAN — BELUM DIIMPLEMENTASIKAN. Tidak ada satu pun di halaman ini yang sudah ada di src/.";
+    white-space: pre-line;
+    display: block;
+    margin: 0 0 2rem 0;
+    padding: 0.9rem 1.1rem;
+    border: 1px solid var(--ifm-color-warning-dark);
+    border-left-width: 6px;
+    border-radius: var(--ifm-global-radius);
+    background: var(--ifm-color-warning-contrast-background);
+    color: var(--ifm-color-warning-contrast-foreground);
+    font-size: 0.9rem;
+    font-weight: 600;
+    line-height: 1.5;
+}
+
+/* The proposals are drafts, so make their sidebar category read as a sidebar of drafts
+   rather than as more documentation. */
+.menu__list-item-collapsible > .menu__link[href$="/category/proposals"] {
+    font-style: italic;
+}
+
+/* Wide reference tables (the handler matrix, the adapter coverage tables) scroll inside
+   their own box instead of stretching the article. */
+.theme-doc-markdown table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+}

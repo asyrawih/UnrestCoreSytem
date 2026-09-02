@@ -281,11 +281,19 @@ reparented element holds connections to its new ancestors only.
 > arms a `TextLabel` warns that `Active` cannot bind to it, naming the element.
 
 > **Queries see inherited groups.** `Descriptor.Group` goes through `Selector.groupOf`, which
-> reads the element, then its preset, then walks the same ancestor chain. So `UnrestGroup`
-> written once on a ScreenGui is enough for `Unrest:Query({ Group = "MainMenu" })` to select
-> everything under it. `Selector.ancestorChain` is the single definition of that walk --
-> `Elements` resolves with it and `Query` watches the chain it returns, so the two cannot
-> disagree about which ancestors count.
+> asks `Selector.attributeOf` -- the one function that applies own > preset > nearest ancestor.
+> `Elements` fills in `element.Attributes` by asking the very same function, so a group is
+> never reported on an element that the query cannot find. `UnrestGroup` written once on a
+> ScreenGui is enough for `Unrest:Query({ Group = "MainMenu" })` to select everything under it,
+> and so is an `UnrestPreset` up there whose bundle carries `UnrestGroup`.
+> `Selector.ancestorChain` is the single definition of the walk underneath it --
+> `Selector.inheritedProviders` reads with it, `Elements` watches the chain it returns, and
+> `Query` watches it too, so none of them can disagree about which ancestors count.
+>
+> That liveness comes from `Selector.ancestorTriggers`: the inheritable subset of
+> `Selector.triggers`. A `Group` filter watches `UnrestGroup` **and** `UnrestPreset` on every
+> ancestor, so swapping the preset on a ScreenGui while the game runs moves the elements
+> underneath in and out of the result set exactly as editing the group there does.
 >
 > The cascade is defined the same way and for the same reason: `Selector.isManaged` answers
 > "is this managed?", `Selector.cascadeUnder` answers "what is managed under here?", and both

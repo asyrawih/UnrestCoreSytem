@@ -1,0 +1,47 @@
+# Moonwave configuration for the UnrestCoreSystem documentation site.
+#
+# Moonwave is a thin wrapper around Docusaurus: it copies ./docs, ./README.md and
+# ./.moonwave into a scratch Docusaurus project (under the OS cache dir, never into
+# this repository) and generates docusaurus.config.js from the values below.
+#
+#   npm run docs:dev     -> live-reload preview on http://localhost:3000/
+#   npm run docs:build   -> static site
+#
+# Nothing here affects `rojo build`, `selene` or `stylua`.
+
+title = "UnrestCoreSystem"
+
+# No `git remote origin` is configured for this repository, so Moonwave cannot infer
+# a repo URL. Leaving `gitRepoUrl` unset simply omits the "GitHub" navbar item and the
+# "Edit this page" links. Set it once a remote exists.
+# gitRepoUrl = "https://github.com/<owner>/UnrestCoreSystem"
+# gitSourceBranch = "main"
+
+changelog = false
+
+[docusaurus]
+url = "http://localhost:3000"
+baseUrl = "/"
+organizationName = "unrest"
+projectName = "UnrestCoreSystem"
+tagline = "An MVC-style UI framework for Roblox. It builds no UI — it adopts the UI you built by hand."
+onBrokenAnchors = "warn"
+
+[navbar]
+title = "UnrestCoreSystem"
+
+[home]
+enabled = true
+includeReadme = false
+
+[[home.features]]
+title = "Adopts, never generates"
+description = "Tag an instance Unrest in Studio and the framework wires it. There is no Mount, no component tree, and nothing in ReplicatedStorage that draws a button."
+
+[[home.features]]
+title = "Attributes before code"
+description = "A button that dispatches a command and a label that follows state are both reachable with zero Luau. Drop to Unrest:Query only when behaviour depends on current state."
+
+[[home.features]]
+title = "An attribute grants no privilege"
+description = "UnrestCommand travels the same Bridge as hand-written Luau. The contract in Net/Contracts.luau, not the attribute, decides what a client may ask for."
