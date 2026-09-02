@@ -8,8 +8,8 @@
     The whole opt-in is one CollectionService tag. Tagging an instance `Unrest` means:
 
       * an adapter is resolved for its ClassName, so the framework knows what it can do;
-      * its `Unrest*` attributes are read and wired, live -- editing one in Studio while the
-        game runs re-wires that element and nothing else;
+      * its `Unrest*` attributes are resolved and wired, live -- editing one in Studio while
+        the game runs re-wires that element and nothing else;
       * it becomes visible to `Unrest:Query`.
 
     Untagging (or destroying, or `:Release`ing) undoes all of that. Every connection an
@@ -38,6 +38,32 @@
     what a client may ask for -- the permission was never in the attribute.
 
     ---------------------------------------------------------------------------
+    Resolution: three layers, most specific wins
+    ---------------------------------------------------------------------------
+
+    `element.Attributes` is not a copy of the instance's attributes any more. It is the
+    result of merging three layers, weakest first:
+
+        3. inheritance -- the nearest ancestor that sets one of `Constants.Inheritable`;
+        2. the preset  -- the bundle named by `UnrestPreset`, from `Presets.luau`;
+        1. the element -- whatever the designer set on this instance.
+
+    So a preset is a default and never an override, and an ancestor is a fallback and never
+    a mandate. `element.Sources` records which layer won each key, so "who set this?" has an
+    answer without reading three places in Studio.
+
+    Only the three names in `Constants.Inheritable` are ever inherited, because the rule is
+    *inherit context, never intent*. `UnrestGroup` says which screen an element is on and
+    every element on that screen shares the answer; `UnrestCommand` says what this one
+    button does, and inheriting it would silently arm every descendant of a panel with the
+    same command. Role, command, payload, channel, bind and format are therefore per-element
+    and stay that way.
+
+    The walk stops at the first `LayerCollector` -- a screen is the widest thing an
+    inheritable attribute is allowed to mean -- and never reads a service or the DataModel,
+    because `UnrestGroup` on `Players` would be a global.
+
+    ---------------------------------------------------------------------------
     Loud vs. fatal
     ---------------------------------------------------------------------------
 
@@ -46,6 +72,10 @@
     not looking at the output window, and taking the rest of the screen down with it would
     be a worse outcome than a warning naming the element, its class and what that class
     actually supports. So attribute wiring warns and skips; code binding raises.
+
+    An `UnrestPreset` nobody declared is the same kind of mistake, and gets the same
+    treatment: a warning naming the value and listing the presets that do exist, and then
+    the element is adopted with its own attributes only.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -53,6 +83,7 @@ local CollectionService = game:GetService("CollectionService")
 local Adapters = require(script.Parent.Adapters)
 local Constants = require(script.Parent.Constants)
 local Maid = require(script.Parent.Util.Maid)
+local Presets = require(script.Parent.Presets)
 local Query = require(script.Parent.Adapters.Query)
 local Selector = require(script.Parent.Adapters.Selector)
 local Signal = require(script.Parent.Util.Signal)
@@ -62,7 +93,8 @@ local Elements = {}
 
 local ATTRIBUTES = Constants.Attributes
 
---- Every attribute the manager reacts to, so one loop wires all the change signals.
+--- Every attribute the manager reads off the element itself, so one loop wires all the
+--- change signals and one loop reads the strongest layer of the merge.
 local WATCHED: { string } = {
     ATTRIBUTES.Role,
     ATTRIBUTES.Group,
@@ -72,7 +104,18 @@ local WATCHED: { string } = {
     ATTRIBUTES.Bind,
     ATTRIBUTES.Format,
     ATTRIBUTES.Cooldown,
+    ATTRIBUTES.Preset,
 }
+
+--[[
+    `Constants.Inheritable` as a stable list. Sorted, so the ancestor walk, the watches it
+    installs and anything printed from it are in a fixed order rather than a hash order.
+]]
+local INHERITABLE: { string } = {}
+for name in (Constants.Inheritable :: any) :: { [string]: boolean } do
+    table.insert(INHERITABLE, name)
+end
+table.sort(INHERITABLE)
 
 --[[
     `UnrestFormat` is a template with one hole, not a format string: designers write
@@ -96,15 +139,195 @@ local function readString(source: { [string]: any }, key: string): string?
 end
 
 --------------------------------------------------------------------------------
+-- Resolution
+--------------------------------------------------------------------------------
+
+--[[
+    Where the ancestor walk stops climbing.
+
+    The DataModel and the services hanging off it are never read. An inheritable attribute
+    is meant to say "everything on this screen belongs to MainMenu"; `UnrestGroup` on
+    `Players` or on `StarterGui` would be a global, and a global is the thing this feature
+    is not.
+]]
+local function isBoundary(instance: Instance): boolean
+    if instance == game then
+        return true
+    end
+    local parent = instance.Parent
+    return parent ~= nil and parent == game
+end
+
+--[[
+    Walks up from `instance`, returning the nearest ancestor that sets each inheritable
+    attribute, and watching every ancestor on the way for changes to all three.
+
+    The whole chain is watched, not only the ancestors that supply a value today: an
+    ancestor nearer than the current provider may set `UnrestGroup` tomorrow and has to win
+    the moment it does, and the current provider may clear it and hand the answer back to
+    somebody further up.
+
+    Two things bound the walk, so the connection count is (chain length x 3) and a screen is
+    the widest it can ever get: the first `LayerCollector` (ScreenGui / SurfaceGui /
+    BillboardGui), whose own attributes are read before stopping, and the service boundary.
+]]
+local function collectAncestors(instance: Instance, maid: Types.Maid, onChanged: () -> ()): { [string]: Instance }
+    local providers: { [string]: Instance } = {}
+
+    local current: Instance? = instance.Parent
+    while current ~= nil do
+        local ancestor: Instance = current
+        if isBoundary(ancestor) then
+            break
+        end
+
+        for _, name in INHERITABLE do
+            if not providers[name] and ancestor:GetAttribute(name) ~= nil then
+                providers[name] = ancestor
+            end
+            maid:Add(ancestor:GetAttributeChangedSignal(name):Connect(onChanged))
+        end
+
+        if ancestor:IsA("LayerCollector") then
+            break
+        end
+        current = ancestor.Parent
+    end
+
+    return providers
+end
+
+--- The declared preset names, or a phrase saying there are none, for the unknown-preset warning.
+local function declaredPresets(): string
+    local names = Presets.List()
+    if #names == 0 then
+        return "none are declared"
+    end
+    return table.concat(names, ", ")
+end
+
+--[[
+    Rebuilds `element.Attributes`, `element.Sources` and `element.Preset` from the three
+    layers, and installs this element's watches on the chain above it into `maid`.
+
+    Applied weakest first, so each layer simply overwrites the one before it and the last
+    writer wins: inherited, then preset, then own.
+]]
+local function resolve(element: Types.ManagedElement, maid: Types.Maid, onAncestorChanged: () -> ()): ()
+    local instance = element.Instance
+    local attributes: { [string]: any } = {}
+    local sources: { [string]: Types.AttributeSource } = {}
+
+    -- Layer 3: the nearest ancestor that sets each inheritable attribute.
+    local providers = collectAncestors(instance, maid, onAncestorChanged)
+    for name, ancestor in providers do
+        attributes[name] = ancestor:GetAttribute(name)
+        sources[name] = {
+            Origin = "Inherited",
+            Ancestor = ancestor,
+            Text = `inherited from {ancestor.Name} ({ancestor.ClassName})`,
+        }
+    end
+
+    --[[
+        Layer 2: the preset. `UnrestPreset` is itself inheritable, so a whole screen can be
+        given a default bundle from its ScreenGui, but the element's own naming of a preset
+        beats the inherited one -- which is why the own value is read before the expansion
+        rather than with the rest of layer 1.
+    ]]
+    local ownPreset = instance:GetAttribute(ATTRIBUTES.Preset)
+    if ownPreset ~= nil then
+        attributes[ATTRIBUTES.Preset] = ownPreset
+        sources[ATTRIBUTES.Preset] = { Origin = "Own", Text = "set here" }
+    end
+
+    element.Preset = nil
+    local presetName = readString(attributes, ATTRIBUTES.Preset)
+    if presetName ~= nil then
+        local preset = Presets.Get(presetName)
+        if preset == nil then
+            --[[
+                Loud, never fatal. A preset name is data typed by somebody who is not
+                watching the output window, and an empty screen is a worse outcome than a
+                warning. The source is named because an inherited preset was typed on an
+                ancestor, and that is where the fix has to go.
+            ]]
+            local from = sources[ATTRIBUTES.Preset]
+            local where = if from ~= nil then from.Text else "set here"
+            warn(
+                `[Unrest.Elements] {instance:GetFullName()} resolves {ATTRIBUTES.Preset} = "{presetName}" `
+                    .. `({where}), which is not a declared preset. Declared presets: {declaredPresets()}. `
+                    .. `The element was adopted with its own attributes only -- fix the spelling, or declare `
+                    .. `it with Presets.Register("{presetName}", ...).`
+            )
+        else
+            element.Preset = presetName
+            for name, value in preset do
+                -- A preset naming a preset would be a second, invisible level of indirection.
+                if name ~= ATTRIBUTES.Preset then
+                    attributes[name] = value
+                    sources[name] = { Origin = "Preset", Preset = presetName, Text = `from preset "{presetName}"` }
+                end
+            end
+        end
+    end
+
+    -- Layer 1: what the designer set on this instance wins outright.
+    for _, name in WATCHED do
+        local value = instance:GetAttribute(name)
+        if value ~= nil then
+            attributes[name] = value
+            sources[name] = { Origin = "Own", Text = "set here" }
+        end
+    end
+
+    element.Attributes = attributes
+    element.Sources = sources
+end
+
+--[[
+    One line naming every resolved attribute and the layer it came from:
+
+        UnrestChannel = Music.NowPlaying (from preset "MusicToggle"),
+        UnrestGroup = MainMenu (inherited from Menu (ScreenGui)),
+        UnrestPayload = Dancefloor (set here)
+
+    `element.Attributes` says what the element ended up with; this says who decided, which
+    is the question a designer actually has when a button does something they never typed.
+]]
+function Elements.describe(element: Types.ManagedElement): string
+    local names: { string } = {}
+    for name in element.Attributes do
+        table.insert(names, name)
+    end
+    table.sort(names)
+
+    local parts: { string } = {}
+    for _, name in names do
+        local source = element.Sources[name]
+        local origin = if source ~= nil then source.Text else "set here"
+        table.insert(parts, `{name} = {tostring(element.Attributes[name])} ({origin})`)
+    end
+
+    if #parts == 0 then
+        return "no wiring attributes -- adopted and queryable, nothing more"
+    end
+    return table.concat(parts, ", ")
+end
+
+--------------------------------------------------------------------------------
 -- Manager
 --------------------------------------------------------------------------------
 
 function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Types.ElementManager
     local managed: { [Instance]: Types.ManagedElement } = {}
-    --- Lives as long as the adoption: the Destroying hook and the attribute watches.
+    --- Lives as long as the adoption: the Destroying hook, the ancestry hook and the
+    --- watches on the element's own attributes.
     local adoption: { [Instance]: Types.Maid } = {}
     --- Torn down and rebuilt on every attribute change: the command and channel wiring.
     local wiring: { [Instance]: Types.Maid } = {}
+    --- Torn down and rebuilt alongside it: this element's watches on its ancestor chain.
+    local ancestry: { [Instance]: Types.Maid } = {}
     --- Adoption order, so `All()` is stable rather than hash-ordered.
     local order: { Instance } = {}
 
@@ -122,14 +345,6 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         ManagedRemoved = managedRemoved,
     }
     local typed = (manager :: any) :: Types.ElementManager
-
-    local function snapshot(instance: Instance): { [string]: any }
-        local attributes: { [string]: any } = {}
-        for _, name in WATCHED do
-            attributes[name] = instance:GetAttribute(name)
-        end
-        return attributes
-    end
 
     --[[
         `UnrestCommand` -> the adapter's `Active` event -> `Bridge:Dispatch`.
@@ -229,20 +444,34 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         end))
     end
 
-    --- Re-reads every `Unrest*` attribute and rebuilds the wiring from scratch.
+    --[[
+        Re-runs the whole resolution and rebuilds the wiring from scratch.
+
+        Cleaning the ancestry maid first is what makes a reparent safe: the watches on the
+        old chain go before the new chain is walked, so an element that moves holds
+        connections to its new ancestors only and an ancestor that stops being one is left
+        with nothing attached. A released element clears both maids through the adoption
+        maid that owns them, so a destroyed ancestor can never keep this element alive.
+    ]]
     local function rewire(element: Types.ManagedElement): ()
-        local maid = wiring[element.Instance]
-        if maid == nil then
+        local instance = element.Instance
+        local wiringMaid = wiring[instance]
+        local ancestryMaid = ancestry[instance]
+        if wiringMaid == nil or ancestryMaid == nil then
             return
         end
-        maid:Clean()
+        wiringMaid:Clean()
+        ancestryMaid:Clean()
 
-        element.Attributes = snapshot(element.Instance)
-        element.Role = Selector.roleOf(element.Instance)
-        element.Group = Selector.groupOf(element.Instance)
+        resolve(element, ancestryMaid, function()
+            rewire(element)
+        end)
 
-        wireCommand(element, maid)
-        wireChannel(element, maid)
+        element.Role = Selector.roleOf(instance)
+        element.Group = readString(element.Attributes, ATTRIBUTES.Group)
+
+        wireCommand(element, wiringMaid)
+        wireChannel(element, wiringMaid)
     end
 
     function manager:Adopt(instance: Instance): Types.ManagedElement?
@@ -275,17 +504,21 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             Role = Selector.roleOf(instance),
             Group = Selector.groupOf(instance),
             Attributes = {},
+            Sources = {},
             Released = released,
         }
 
         local adoptionMaid = Maid.new()
         local wiringMaid = Maid.new()
+        local ancestryMaid = Maid.new()
         adoptionMaid:Add(wiringMaid)
+        adoptionMaid:Add(ancestryMaid)
         adoptionMaid:Add(released)
 
         managed[instance] = element
         adoption[instance] = adoptionMaid
         wiring[instance] = wiringMaid
+        ancestry[instance] = ancestryMaid
         table.insert(order, instance)
 
         -- Editing an attribute in Studio while the game runs re-wires this element only.
@@ -294,6 +527,16 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
                 rewire(element)
             end))
         end
+        --[[
+            Moving an element changes which ancestors it inherits from, so the answer has to
+            be computed again against the new chain. `AncestryChanged` fires for a move
+            anywhere above the element, not only at its own parent, which is exactly the set
+            of moves that can change that answer -- dragging a Frame between two ScreenGuis
+            re-resolves every managed button inside it.
+        ]]
+        adoptionMaid:Add(instance.AncestryChanged:Connect(function()
+            rewire(element)
+        end))
         adoptionMaid:Add(instance.Destroying:Connect(function()
             typed:Release(instance)
         end))
@@ -312,6 +555,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
 
         managed[instance] = nil
         wiring[instance] = nil
+        ancestry[instance] = nil
         local adoptionMaid = adoption[instance]
         adoption[instance] = nil
 

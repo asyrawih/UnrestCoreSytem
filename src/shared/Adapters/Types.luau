@@ -115,16 +115,50 @@ export type AdapterRegistry = {
 -- Managed elements
 --------------------------------------------------------------------------------
 
+--[[
+    Which of the three resolution layers supplied one attribute value.
+
+      * `Own`       -- set on the element itself.
+      * `Preset`    -- expanded from the bundle its `UnrestPreset` names.
+      * `Inherited` -- read off the nearest ancestor that sets an inheritable attribute.
+
+    Most specific wins: `Own` beats `Preset` beats `Inherited`. A preset is a default and an
+    ancestor is a fallback; neither can override what the designer typed on the element.
+]]
+export type AttributeOrigin = "Own" | "Preset" | "Inherited"
+
+--- One entry of `ManagedElement.Sources`: which layer won, and where the value came from.
+export type AttributeSource = {
+    Origin: AttributeOrigin,
+    --- The preset that supplied the value, when `Origin` is `"Preset"`.
+    Preset: string?,
+    --- The ancestor that supplied it, when `Origin` is `"Inherited"`.
+    Ancestor: Instance?,
+    --- One phrase naming the source, e.g. `set here`, `from preset "MusicToggle"`,
+    --- `inherited from Menu (ScreenGui)`.
+    Text: string,
+}
+
 --- Everything the framework knows about one adopted instance.
 export type ManagedElement = {
     Instance: Instance,
     Adapter: ResolvedAdapter,
-    --- `UnrestRole` attribute, falling back to `Instance.Name`.
+    --- `UnrestRole` attribute, falling back to `Instance.Name`. Never inherited: a role is
+    --- this element's identity, not its context.
     Role: string,
-    --- `UnrestGroup` attribute, if any.
+    --- Resolved `UnrestGroup`: the element's own, or the nearest ancestor's.
     Group: string?,
-    --- Snapshot of the element's `Unrest*` attributes, refreshed when they change.
+    --[[
+        The element's `Unrest*` attributes after resolution -- its own over its preset's
+        over the nearest ancestor's inheritable ones -- refreshed whenever any of the three
+        changes. The rest of the framework reads this and nothing else.
+    ]]
     Attributes: { [string]: any },
+    --- Name of the preset that expanded into `Attributes`, when one applied and resolved.
+    --- An `UnrestPreset` naming a preset nobody declared warns and leaves this nil.
+    Preset: string?,
+    --- Provenance for every key of `Attributes`, so "who set this?" has an answer.
+    Sources: { [string]: AttributeSource },
     Released: Signal<ManagedElement>,
 }
 

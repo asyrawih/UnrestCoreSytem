@@ -57,10 +57,13 @@ queryable; it simply does nothing on its own.
 | `UnrestBind` | string | Property the channel value is written into. Defaults to the adapter's `ValueProperty`. |
 | `UnrestFormat` | string | Template applied to the channel value. `{value}` is the hole. |
 | `UnrestCooldown` | number | Client-side debounce, in seconds, between activations. **Advisory only.** |
+| `UnrestPreset` | string | Names a bundle in `Presets.luau` that expands into several of the attributes above. |
 
-Changing any of them re-wires **that element only**, live, through
+Changing one on the element re-wires **that element only**, live, through
 `GetAttributeChangedSignal`. Editing `UnrestFormat` in Studio while the game runs repaints
-the label on the next publish; you do not restart anything.
+the label on the next publish; you do not restart anything. Changing an *inheritable*
+attribute on an ancestor re-wires every managed descendant, and moving an element re-resolves
+it against its new ancestors — also live, also without a restart.
 
 ### A button, with zero code
 
@@ -91,6 +94,105 @@ default is the adapter's `ValueProperty` (see §5).
 With no `UnrestFormat`, the published value is written raw — which is how you drive a
 `Color3`, a `UDim2` or a `boolean` from a channel. With a format, the result is always a
 string, and a `nil` value renders as empty rather than as the word `nil`.
+
+### Resolution: three layers, most specific wins
+
+`UnrestGroup = "MainMenu"` repeated on nine buttons is nine chances to typo it. Two features
+remove that repetition without moving any decision out of Studio, and `element.Attributes` is
+the merge of all three layers, weakest first:
+
+| Layer | Where it comes from | Beats |
+| --- | --- | --- |
+| 3. inheritance | the nearest ancestor that sets one of the inheritable attributes | nothing |
+| 2. the preset | the bundle `UnrestPreset` names, from `Presets.luau` | inheritance |
+| 1. the element | what you set on this instance | both |
+
+So **a preset is a default, never an override**, and an ancestor is a fallback, never a
+mandate. Setting `UnrestPayload` on one button that uses the `MusicToggle` preset changes that
+button and nothing else.
+
+`ManagedElement.Sources` records which layer won each key, so "who set this?" has an answer
+without opening three property panels:
+
+```luau
+local element = unrest.Elements:Get(button)
+print(element.Preset)                                --> MusicToggle
+print(element.Sources.UnrestCommand.Origin)          --> Preset
+print(element.Sources.UnrestGroup.Text)              --> inherited from Menu (ScreenGui)
+print(require(Unrest.Elements).describe(element))
+--> UnrestChannel = Music.NowPlaying (from preset "MusicToggle"),
+--> UnrestGroup = MainMenu (inherited from Menu (ScreenGui)),
+--> UnrestPayload = Dancefloor (set here)
+```
+
+### `UnrestPreset` — the bundle
+
+```luau
+-- src/shared/Presets.luau
+MusicToggle = {
+    UnrestCommand = "Music.Play",
+    UnrestPayload = "Lobby",
+    UnrestChannel = "Music.NowPlaying",
+    UnrestBind    = "Text",
+    UnrestFormat  = "Music: {value}",
+}
+```
+
+| | |
+| --- | --- |
+| Tag | `Unrest` |
+| `UnrestPreset` | `MusicToggle` |
+
+One attribute instead of five. The point is not brevity: it is that *what a music toggle is*
+gets decided once, in code, under review, instead of being retyped on every button and
+drifting. `Presets.Register(name, bundle)` adds one at runtime; `Presets.List()` names them
+all.
+
+A preset is a shorthand and not a privilege. A preset naming a command the contracts do not
+declare is refused at dispatch exactly as a hand-typed `UnrestCommand` would be.
+
+Naming a preset that does not exist warns and adopts the element anyway, with its own
+attributes only:
+
+```
+[Unrest.Elements] game.Players.You.PlayerGui.Menu.Play resolves UnrestPreset = "MusicTogle"
+(set here), which is not a declared preset. Declared presets: DanceButton, DanceStop,
+MusicStop, MusicToggle, NowPlayingLabel, VolumeButton. The element was adopted with its own
+attributes only -- fix the spelling, or declare it with Presets.Register("MusicTogle", ...).
+```
+
+### Inheritance — context, never intent
+
+Exactly three attributes are inherited from an ancestor, and they are listed in
+`Constants.Inheritable`:
+
+| Attribute | Why it is inheritable |
+| --- | --- |
+| `UnrestGroup` | which screen an element is on — every element on that screen shares the answer |
+| `UnrestCooldown` | a house debounce for a panel of buttons |
+| `UnrestPreset` | a default bundle for everything under one container |
+
+Everything else — `UnrestRole`, `UnrestCommand`, `UnrestPayload`, `UnrestChannel`,
+`UnrestBind`, `UnrestFormat` — is **per-element intent and is never inherited**. Inheriting a
+command would silently arm every descendant of a panel with the same command, which is the
+opposite of a feature. `UnrestRole` is this element's identity, so it stays put too.
+
+The walk goes up from the element's parent and stops at the **first `LayerCollector`**
+(`ScreenGui`, `SurfaceGui`, `BillboardGui`), whose own attributes are read before stopping. A
+screen is the widest thing an inheritable attribute is allowed to mean. Services and the
+DataModel are never read at all — `UnrestGroup` on `Players` would be a global, and a global
+is what this is not.
+
+Every ancestor on that chain is watched, not only the ones supplying a value today: a nearer
+ancestor that sets `UnrestGroup` tomorrow has to win the moment it does. The connections hang
+off the element's own maid and are torn down and rebuilt on every re-resolution, so a
+reparented element holds connections to its new ancestors only.
+
+> **Queries still match on the element's own `UnrestGroup`.** `Descriptor.Group` goes through
+> `Selector.groupOf`, which reads the instance and does not walk. So an element that only
+> *inherits* `MainMenu` reports `element.Group == "MainMenu"` but is **not** matched by
+> `Unrest:Query({ Group = "MainMenu" })`. Keep `UnrestGroup` on the elements a query selects
+> by group, and use inheritance for the rest.
 
 ### An attribute grants no privilege
 
@@ -417,6 +519,7 @@ Valid fields: Ancestor, Group, Name, Recursive, Role, Selector, Tag.
 | `src/shared/Adapters/Selector.luau` | descriptor compilation and the match predicate |
 | `src/shared/Adapters/Query.luau` | the live query engine |
 | `src/shared/Adapters/Classes/*.luau` | one file per class family |
-| `src/shared/Elements/init.luau` | the ElementManager: adoption and attribute wiring |
+| `src/shared/Elements/init.luau` | the ElementManager: adoption, attribute resolution and wiring |
+| `src/shared/Presets.luau` | the named attribute bundles `UnrestPreset` expands into |
 | `src/shared/Util/Resolver.luau` | runtime validation of the public boundary |
 | `src/client/init.client.luau` | the worked example — adopts what is tagged, builds nothing |

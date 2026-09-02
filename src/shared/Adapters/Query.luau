@@ -28,6 +28,7 @@
 local CollectionService = game:GetService("CollectionService")
 
 local Adapters = require(script.Parent)
+local Constants = require(script.Parent.Parent.Constants)
 local Maid = require(script.Parent.Parent.Util.Maid)
 local Resolver = require(script.Parent.Parent.Util.Resolver)
 local Selector = require(script.Parent.Selector)
@@ -52,6 +53,7 @@ function Query.new(
     local bound: Types.Handlers = if handlers ~= nil then Resolver.Handlers(handlers) else {}
 
     local watchedProperties, watchedAttributes = Selector.triggers(compiled)
+    local watchesAncestors = Selector.watchesAncestors(compiled)
     local hint = `Narrow the query {compiled.Text} with a Selector or a Role, or drop that handler.`
 
     local lifetime = Maid.new()
@@ -131,6 +133,26 @@ function Query.new(
         detach(element)
     end
 
+    --[[
+        A `Group` filter reads through the element to the chain above it, so an edit up there
+        moves the element in or out of this set just as surely as an edit on the element
+        itself. The whole chain is watched, not only the ancestor supplying a value today: a
+        nearer one that sets `UnrestGroup` tomorrow takes precedence the moment it does.
+
+        Rebuilt under a keyed maid slot, so reparenting drops the previous chain outright
+        rather than accumulating connections to ancestors the element no longer has.
+    ]]
+    local function bindAncestry(element: Instance, watcher: Types.Maid): ()
+        local chain = Maid.new()
+        watcher:Add(chain, "ancestry")
+
+        for _, ancestor in Selector.ancestorChain(element) do
+            chain:Add(ancestor:GetAttributeChangedSignal(Constants.Attributes.Group):Connect(function()
+                evaluate(element)
+            end))
+        end
+    end
+
     local function watch(element: Instance): ()
         if destroyed or watched[element] ~= nil then
             return
@@ -150,6 +172,17 @@ function Query.new(
                 evaluate(element)
             end))
         end
+        if watchesAncestors then
+            bindAncestry(element, watcher)
+
+            -- Moving anywhere above the element changes which ancestors it reads from, and
+            -- is exactly the set of moves that can change the answer.
+            watcher:Add(element.AncestryChanged:Connect(function()
+                bindAncestry(element, watcher)
+                evaluate(element)
+            end))
+        end
+
         watcher:Add(element.Destroying:Connect(function()
             unwatch(element)
         end))

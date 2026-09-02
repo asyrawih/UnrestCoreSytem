@@ -36,12 +36,77 @@ function Selector.roleOf(instance: Instance): string
     return instance.Name
 end
 
---- `UnrestGroup`, or nil. No fallback, on purpose.
-function Selector.groupOf(instance: Instance): string?
+--[[
+    The ancestors an inheritable attribute may be read from, nearest first.
+
+    Two boundaries, and both matter. The walk stops after the first `LayerCollector`, because
+    a screen is the widest thing an inherited value can sensibly mean -- a group that leaked
+    past the ScreenGui would start selecting elements on unrelated screens. It also stops
+    before `game` and before anything parented straight to it, so a stray attribute on a
+    service can never be read as framework configuration.
+
+    This is the single definition of the walk. `Elements` resolves inherited attributes with
+    it and `Query` watches the chain it returns, so the two can never disagree about which
+    ancestors count.
+]]
+function Selector.ancestorChain(instance: Instance): { Instance }
+    local chain: { Instance } = {}
+
+    local current: Instance? = instance.Parent
+    while current ~= nil do
+        local ancestor: Instance = current
+        if ancestor == game then
+            break
+        end
+
+        local parent = ancestor.Parent
+        if parent ~= nil and parent == game then
+            break
+        end
+
+        table.insert(chain, ancestor)
+
+        if ancestor:IsA("LayerCollector") then
+            break
+        end
+        current = ancestor.Parent
+    end
+
+    return chain
+end
+
+local function readGroup(instance: Instance): string?
     local group = instance:GetAttribute(Constants.Attributes.Group)
     if typeof(group) == "string" and #group > 0 then
         return group
     end
+    return nil
+end
+
+--[[
+    `UnrestGroup`, from the element or the nearest ancestor that sets one. No fallback to the
+    instance name, on purpose: a group is something a designer states, never something the
+    framework guesses.
+
+    Inheriting here is what makes the attribute worth having. A group is context -- every
+    element on a screen shares the answer -- so it is written once on the ScreenGui, and
+    `Query({ Group = "MainMenu" })` still selects the lot. `roleOf` deliberately does NOT
+    walk: a role is identity, and inheriting one would give every descendant of a panel the
+    same name.
+]]
+function Selector.groupOf(instance: Instance): string?
+    local own = readGroup(instance)
+    if own ~= nil then
+        return own
+    end
+
+    for _, ancestor in Selector.ancestorChain(instance) do
+        local inherited = readGroup(ancestor)
+        if inherited ~= nil then
+            return inherited
+        end
+    end
+
     return nil
 end
 
@@ -113,6 +178,17 @@ function Selector.triggers(compiled: Types.CompiledSelector): ({ string }, { str
     end
 
     return properties, attributes
+end
+
+--[[
+    Whether this selector's answer can be changed by an instance other than the candidate.
+
+    Only `Group` inherits, so only `Group` makes a query depend on the chain above each
+    element. A caller that ignores this still matches correctly on the first pass; it just
+    stops being live when a group is edited on a ScreenGui rather than on the element.
+]]
+function Selector.watchesAncestors(compiled: Types.CompiledSelector): boolean
+    return compiled.Group ~= nil
 end
 
 --- The predicate. Cheap enough to re-run on every rename, tag change or attribute change.

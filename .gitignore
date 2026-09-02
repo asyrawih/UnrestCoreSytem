@@ -17,6 +17,7 @@ sourcemap.json
 *.rbxlx.lock
 *.rbxm
 *.rbxmx
+.claude
 
 # Build output
 /build

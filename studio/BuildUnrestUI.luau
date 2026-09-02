@@ -16,6 +16,19 @@
 
     Re-running is safe: an existing `UnrestDemo` is removed first, and the whole build is a
     single undo step.
+
+    On how little is written here. An earlier version of this file set 32 attributes across
+    these nine elements. It now sets 11, and two of the nine carry none at all. Nothing was
+    given up:
+
+      * `UnrestGroup` is set once, on the ScreenGui, and inherited by everything under it;
+      * a preset name stands in for the bundle of attributes it implies, so "what a music
+        toggle is" is decided once in `Presets.luau` rather than retyped per button;
+      * `UnrestRole` is omitted wherever it would just repeat the instance's own name, which
+        `Role` already falls back to.
+
+    What is left is the one fact only the author knows: which command this button sends, and
+    with what payload.
 ]]
 
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
@@ -145,10 +158,11 @@ local function build(): ScreenGui
     panelList.HorizontalAlignment = Enum.HorizontalAlignment.Left
 
     --[[
-        Tagged with a group but no command: it does nothing on its own, and exists so the
-        `Group = "MainMenu"` query in the client bootstrap has a container to count.
+        Tagged, and that is all. It does nothing on its own and exists so the
+        `Group = "MainMenu"` query has a container to count -- the group arrives by
+        inheritance from the ScreenGui, and `Role` falls back to the instance name.
     ]]
-    manage(panel, { UnrestRole = "Panel", UnrestGroup = "MainMenu" })
+    manage(panel, {})
 
     label("Title", "Dynamic UI", 1, 20, ON_LIGHT).Parent = panel
 
@@ -158,12 +172,10 @@ local function build(): ScreenGui
         `Music.NowPlaying` is retained, so this paints correctly even if the value was
         published long before the screen loaded.
     ]]
-    manage(label("NowPlaying", "Now playing: --", 2, 15, ON_LIGHT), {
-        UnrestChannel = "Music.NowPlaying",
-        UnrestBind = "Text",
-        UnrestFormat = "Now playing: {value}",
-        UnrestGroup = "MainMenu",
-    }).Parent = panel
+    local nowPlaying = manage(label("NowPlaying", "Now playing: --", 2, 15, ON_LIGHT), {
+        UnrestPreset = "NowPlayingLabel",
+    })
+    nowPlaying.Parent = panel
 
     local row = Instance.new("Frame")
     row.Name = "Row"
@@ -181,23 +193,24 @@ local function build(): ScreenGui
         `UnrestCommand = "Music.ForceStopAll"` here would be refused: that contract does not
         set `AllowClient`, and an attribute grants no privilege.
     ]]
-    manage(chip("StopMusic", "Stop", 1, false), {
-        UnrestCommand = "Music.Stop",
-        UnrestRole = "StopMusic",
-        UnrestGroup = "MainMenu",
-    }).Parent = row
+    manage(chip("StopMusic", "Stop", 1, false), { UnrestPreset = "MusicStop" }).Parent = row
 
-    manage(chip("VolumeDown", "Vol 20%", 2, false), {
-        UnrestCommand = "Music.SetVolume",
+    --[[
+        Two buttons, one preset, and the only thing that differs between them stays on the
+        element. A preset is a default, so `UnrestPayload` here overrides nothing and
+        completes the pair.
+    ]]
+    local volumeDown = manage(chip("VolumeDown", "Vol 20%", 2, false), {
+        UnrestPreset = "VolumeButton",
         UnrestPayload = 0.2,
-        UnrestGroup = "MainMenu",
-    }).Parent = row
+    })
+    volumeDown.Parent = row
 
-    manage(chip("VolumeUp", "Vol 80%", 3, false), {
-        UnrestCommand = "Music.SetVolume",
+    local volumeUp = manage(chip("VolumeUp", "Vol 80%", 3, false), {
+        UnrestPreset = "VolumeButton",
         UnrestPayload = 0.8,
-        UnrestGroup = "MainMenu",
-    }).Parent = row
+    })
+    volumeUp.Parent = row
 
     label("Hint", "Tagged Unrest. Edit freely -- the framework only reads the tag.", 4, 12, ON_LIGHT).Parent = panel
 
@@ -222,39 +235,28 @@ local function build(): ScreenGui
         cannot express, and `UnrestRole` is how the query finds it without depending on the
         instance name.
     ]]
-    manage(chip("ToggleMenu", "DxChips X", 1, true), {
-        UnrestRole = "ToggleMenu",
-        UnrestGroup = "MainMenu",
-    }).Parent = dock
+    manage(chip("ToggleMenu", "DxChips X", 1, true), {}).Parent = dock
 
-    manage(chip("MusicChip", "Music: --", 2, false), {
-        UnrestCommand = "Music.Play",
-        UnrestPayload = "Lobby",
-        UnrestChannel = "Music.NowPlaying",
-        UnrestBind = "Text",
-        UnrestFormat = "Music: {value}",
-        UnrestRole = "MusicChip",
-        UnrestGroup = "MainMenu",
-    }).Parent = dock
+    manage(chip("MusicChip", "Music: --", 2, false), { UnrestPreset = "MusicToggle" }).Parent = dock
 
     --[[
         `UnrestCooldown` is a client-side debounce and advisory only. The binding rate limit
         that actually protects the server is `Dance.Play`'s contract: 3 calls per 2 seconds,
         per player, enforced server-side.
     ]]
-    manage(chip("DanceChip", "Dance", 3, false), {
-        UnrestCommand = "Dance.Play",
+    local danceChip = manage(chip("DanceChip", "Dance", 3, false), {
+        UnrestPreset = "DanceButton",
         UnrestPayload = "Wave",
-        UnrestCooldown = 0.5,
-        UnrestRole = "DanceChip",
-        UnrestGroup = "MainMenu",
-    }).Parent = dock
+    })
+    danceChip.Parent = dock
 
-    manage(chip("StopDance", "Stop dance", 4, false), {
-        UnrestCommand = "Dance.Stop",
-        UnrestRole = "StopDance",
-        UnrestGroup = "MainMenu",
-    }).Parent = dock
+    manage(chip("StopDance", "Stop dance", 4, false), { UnrestPreset = "DanceStop" }).Parent = dock
+
+    --[[
+        One attribute for the whole screen. Every tagged descendant inherits it, so
+        `Group = "MainMenu"` selects the lot without any of them naming it.
+    ]]
+    screen:SetAttribute("UnrestGroup", "MainMenu")
 
     screen.Parent = StarterGui
     return screen
@@ -265,7 +267,12 @@ end
 --------------------------------------------------------------------------------
 
 local function run(): ()
-    local recording = ChangeHistoryService:TryBeginRecording("Build Unrest UI")
+    local okRec, recording = pcall(function()
+        return ChangeHistoryService:TryBeginRecording("Build Unrest UI")
+    end)
+    if not okRec then
+        recording = nil
+    end
     local ok, result = pcall(build)
 
     if recording then
@@ -280,7 +287,7 @@ local function run(): ()
     end
 
     Selection:Set({ result })
-    print(`[BuildUnrestUI] built StarterGui.{SCREEN_NAME}. 9 tagged elements, ready for Play.`)
+    print(`[BuildUnrestUI] built StarterGui.{SCREEN_NAME}. 9 tagged elements, 11 attributes, ready for Play.`)
 end
 
 if plugin then

@@ -44,6 +44,27 @@ local Constants = {
         --- Seconds of client-side debounce between activations. Advisory only: the server
         --- rate limit is the real one.
         Cooldown = "UnrestCooldown",
+        --- Names an entry in `Presets.luau`, which expands into several of the attributes
+        --- above. One attribute instead of five, defined once and reused.
+        Preset = "UnrestPreset",
+    }),
+
+    --[[
+        Attributes a descendant inherits from an ancestor when it does not set its own.
+
+        The rule is inherit context, never intent. `UnrestGroup` says which screen an element
+        belongs to and every element on that screen shares the answer, so it belongs on the
+        ScreenGui once. `UnrestCommand` says what this one button does, and inheriting it
+        would silently arm every descendant of a panel with the same command -- so it is not
+        inheritable, and neither is anything else that names a specific behaviour.
+
+        Precedence, most specific first:
+            the element's own attribute  >  its preset  >  the nearest ancestor's
+    ]]
+    Inheritable = table.freeze({
+        UnrestGroup = true,
+        UnrestCooldown = true,
+        UnrestPreset = true,
     }),
 
     --- Names of the replicated objects. The server creates them; the client waits for them.
