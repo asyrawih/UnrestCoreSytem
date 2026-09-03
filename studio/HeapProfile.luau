@@ -14,7 +14,8 @@
     PRASYARAT. Bangun place-nya dengan `bench.project.json`, bukan `default.project.json`.
     Berkas ini hanya menyentuh dua jalur nyata di DataModel:
 
-        ReplicatedStorage.Bench.Baseline.Maid   -- Maid lama, ada hanya di build bench
+        Baseline.Maid                           -- Maid lama, ada hanya di build bench
+                                                -- (dicari, bukan disebut path-nya: lihat di bawah)
         ReplicatedStorage.Unrest.Util.Scope     -- re-export Scythe milik framework
 
     Scythe di-require lewat re-export framework, tidak pernah lewat

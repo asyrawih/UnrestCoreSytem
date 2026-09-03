@@ -80,8 +80,18 @@ local leaves: { Instance } = {}
     Compiled at load, not per call. `Selector.parse` validates the descriptor through the
     Resolver, and that validation is a setup cost a caller pays once per query -- charging
     it to every `matches` call would measure the Resolver instead.
+
+    BOTH CARRY THE TAG, and not by preference: a descriptor with no `Tag` must supply an
+    `Ancestor`, or the Resolver refuses it. A tagless, rootless query would have to scan the
+    whole DataModel, so the framework will not let one exist. There is no `Ancestor` to give
+    at load time either -- the fixture is not built until `BeforeAll`.
+
+    That turns out to be the better pair anyway. Both rows now pay the same `isManaged`
+    climb, so the only thing separating them is how the second half of the predicate is
+    answered: a role is read off the instance, a group is resolved up the chain. One
+    variable, which is what a comparison is for.
 ]]
-local ROLE_FILTER: Types.CompiledSelector = Selector.parse({ Role = LEAF_ROLE })
+local ROLE_FILTER: Types.CompiledSelector = Selector.parse({ Tag = Constants.Tag, Role = LEAF_ROLE })
 local GROUP_FILTER: Types.CompiledSelector = Selector.parse({ Tag = Constants.Tag, Group = GROUP })
 
 --[[
@@ -92,7 +102,15 @@ local GROUP_FILTER: Types.CompiledSelector = Selector.parse({ Tag = Constants.Ta
     something a reader could act on.
 ]]
 local function ensureFixture(): ()
-    if fixture ~= nil then
+    --[[
+        `fixture.Parent ~= nil` as well as `fixture ~= nil`. A destroyed instance is still a
+        perfectly truthy reference, so somebody clearing `UnrestBenchFixture` out of
+        Explorer between runs would leave this holding a dead tree -- and dead is not an
+        error here, it is worse: `isManaged` asks `IsDescendantOf(game)` first, so every
+        `matches` row would quietly measure a fast rejection and report numbers that look
+        like a win.
+    ]]
+    if fixture ~= nil and fixture.Parent ~= nil then
         return
     end
 
@@ -191,15 +209,19 @@ return {
             Selector.groupOf(leaf)
         end,
 
-        --- A predicate that needs no walk, so it costs about what `roleOf` costs.
-        ["matches (Role only)"] = function(_profiler: Profiler, leaf: Instance)
+        --[[
+            The tag climb plus a role read. `roleOf` needs no walk of its own, so whatever
+            this costs above the `roleOf` row is what `isManaged` costs.
+        ]]
+        ["matches (Tag + Role)"] = function(_profiler: Profiler, leaf: Instance)
             Selector.matches(leaf, ROLE_FILTER)
         end,
 
         --[[
-            The expensive predicate, and the realistic one: the framework tag means
-            `isManaged`, which climbs looking for the tag, and then the group is resolved,
-            which climbs again. This is the row a live query re-runs on every watched edit.
+            The expensive predicate, and the realistic one. Same tag climb as the row above,
+            and then the group is resolved, which climbs again -- so the gap between these
+            two rows is the cost of resolving an inherited attribute, isolated. This is the
+            row a live query re-runs on every watched edit.
         ]]
         ["matches (Tag + Group)"] = function(_profiler: Profiler, leaf: Instance)
             Selector.matches(leaf, GROUP_FILTER)
