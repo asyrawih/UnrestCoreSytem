@@ -1,3 +1,17 @@
+````
+                     ,-.--, ,--.-,,-,--,.--, .-.--, .-._         ,---.      .-._
+  _,..---._ .--.-.  /=/, .'/==/  /|=|  ||  |=| -\==Y==/ \  .-._.--.'  \    /==/ \  .-._
+/==/,   -  \\==\ -\/=/- /  |==|_ ||=|, ||  `-' _|==|==|, \/ /, |==\-/\ \   |==|, \/ /, /
+|==|   _   _\\==\ `-' ,/   |==| ,|/=| _|\     , |==|==|-  \|  |/==/-|_\ |  |==|-  \|  |
+|==|  .=.   | |==|,  - |   |==|- `-' _ | `--.  -|==|==| ,  | -|\==\,   - \ |==| ,  | -|
+|==|,|   | -|/==/   ,   \  |==|  _     |     \_ |==|==| -   _ |/==/ -   ,| |==| -   _ |
+|==|  '='   /==/, .--, - \ |==|   .-. ,\     |  \==\==|  /\ , /==/-  /\ - \|==|  /\ , |
+|==|-,   _`/\==\- \/=/ , / /==/, //=/  |      \ /==/==/, | |- \==\ _.\=\.-'/==/, | |- |
+`-.`.____.'  `--`-'  `--`  `--`-' `-`--`       `--``--`./  `--``--`        `--`./  `--`
+````
+
+[Discord](https://discord.gg/MZYTABSSfb)
+
 # UnrestCoreSystem
 
 An MVC-style UI framework for Roblox, written in Luau.
@@ -195,6 +209,34 @@ user's `~/.config/nvim/.stylua.toml`, but uses the Roblox conventions of 4-space
 indentation and `call_parentheses = "Always"` instead of that file's
 Neovim-Lua conventions. `[sort_requires]` is enabled, so `require` blocks at the
 top of a module are kept alphabetically sorted.
+
+## Git hooks (banner)
+
+Every source file carries the project banner and the Discord link at the top.
+Git hooks are not cloned, so run this once per clone:
+
+```sh
+.githooks/install.sh    # sets core.hooksPath to .githooks
+```
+
+From then on the `pre-commit` hook stamps the banner onto every file a commit
+**adds** — existing files are never rewritten, so editing a file does not touch
+its header. `git commit --no-verify` bypasses it once.
+
+```sh
+.githooks/apply-banner.sh --all             # backfill every tracked file
+.githooks/apply-banner.sh path/to/File.luau # stamp specific files
+.githooks/apply-banner.sh --check <files>   # exit 1 if a banner is missing
+```
+
+The art lives in one place, `.githooks/banner.txt`, and the script wraps it in
+whatever comment syntax the target speaks: `--[[ ]]` for Luau, `/* */` for CSS
+and JS, `#` for TOML, YAML and shell, a fenced code block for Markdown. It sits
+*below* a shebang, a Luau `--!strict` directive or Markdown front matter, so
+nothing that must own line 1 is displaced. Files are skipped when they already
+carry the banner, when the format has no comments (`*.json`, `.luaurc`), when
+they are generated (`*.lock`, `Packages/`) or when they are not ours to modify
+(`vendor/`, `LICENSE*` — see `NOTICE.md`).
 
 ## Type checking
 

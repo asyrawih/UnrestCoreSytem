@@ -1,3 +1,4 @@
+#!/usr/bin/env bash
 #                      ,-.--, ,--.-,,-,--,.--, .-.--, .-._         ,---.      .-._
 #   _,..---._ .--.-.  /=/, .'/==/  /|=|  ||  |=| -\==Y==/ \  .-._.--.'  \    /==/ \  .-._
 # /==/,   -  \\==\ -\/=/- /  |==|_ ||=|, ||  `-' _|==|==|, \/ /, |==\-/\ \   |==|, \/ /, /
@@ -10,18 +11,21 @@
 #
 # https://discord.gg/MZYTABSSfb
 
-# Third-party code. Not ours to reformat.
 #
-# vendor/Scythe.luau is a verbatim copy of an MPL-2.0 file (see NOTICE.md). Reformatting it
-# would both modify a file whose licence attaches obligations to modification, and make the
-# copy drift from the upstream it must be diffable against.
-vendor/
+# Point this clone's hooks at .githooks/.
+#
+# Git hooks are not cloned, so every clone runs this once. `core.hooksPath` is used rather
+# than copying files into .git/hooks so the hook stays version-controlled and a fix reaches
+# everyone with a pull.
 
-# Wally's installed tree, rewritten wholesale by `wally install`.
-Packages/
-DevPackages/
-ServerPackages/
+set -euo pipefail
 
-# Docs site toolchain.
-node_modules/
-build/
+HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(git -C "$HOOK_DIR" rev-parse --show-toplevel)"
+
+chmod +x "$HOOK_DIR/pre-commit" "$HOOK_DIR/apply-banner.sh" "$HOOK_DIR/install.sh"
+git -C "$ROOT" config core.hooksPath .githooks
+
+echo "hooks: core.hooksPath -> .githooks"
+echo "hooks: new files added to a commit will be stamped with the banner."
+echo "hooks: uninstall with 'git config --unset core.hooksPath'"
