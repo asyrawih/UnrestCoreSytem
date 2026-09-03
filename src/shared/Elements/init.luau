@@ -373,10 +373,10 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     --- Torn down and rebuilt alongside it: this element's watches on its ancestor chain.
     local ancestry: { [Instance]: Types.Scope } = {}
     --[[
-        One `() -> ()` per element that re-runs its wiring, kept because `resolve` needs to hand
-        it to every ancestor watch it installs. Built once and reused rather than per rewire: a
-        rewire happens on adoption and again on every edit to any watched attribute on the
-        element or on any of its ancestors, and the closure is identical every time.
+        One `() -> ()` per element that re-runs its wiring. `Adopt` makes it, every watch it
+        installs shares it, and `rewire` hands the same one to each ancestor watch `resolve`
+        adds -- so an element pays for it once rather than once per watched attribute, and
+        again on every rewire.
     ]]
     local rewires: { [Instance]: () -> () } = {}
     --- Adoption order, so `All()` is stable rather than hash-ordered.
@@ -520,21 +520,14 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         local instance = element.Instance
         local wiringScope = wiring[instance]
         local ancestryScope = ancestry[instance]
-        if wiringScope == nil or ancestryScope == nil then
+        local onAncestorChanged = rewires[instance]
+        if wiringScope == nil or ancestryScope == nil or onAncestorChanged == nil then
             return
         end
         Scope.clean(wiringScope)
         Scope.clean(ancestryScope)
 
-        local onAncestorChanged = rewires[instance]
-        if onAncestorChanged == nil then
-            onAncestorChanged = function()
-                rewire(element)
-            end
-            rewires[instance] = onAncestorChanged
-        end
-
-        local resolved = resolve(element, ancestryScope, onAncestorChanged :: () -> ())
+        local resolved = resolve(element, ancestryScope, onAncestorChanged)
 
         element.Role = Selector.roleOf(instance)
         --[[
@@ -628,20 +621,28 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         local ancestryScope = Scope.scope()
         Scope.addBulk(adoptionScope, wiringScope, ancestryScope, released)
 
+        --[[
+            The one closure that re-runs this element's wiring, made here and nowhere else.
+
+            Every watch below wants it, `resolve` hands it to each of the ancestor watches it
+            installs, and all of them want the same two lines. Written inline it was a fresh
+            closure per watched attribute per element -- nine before anything else -- and
+            another one on every rewire thereafter.
+        ]]
+        local function rewireThis(): ()
+            rewire(element)
+        end
+
         managed[instance] = element
         adoption[instance] = adoptionScope
         wiring[instance] = wiringScope
         ancestry[instance] = ancestryScope
+        rewires[instance] = rewireThis
         table.insert(order, instance)
 
         -- Editing an attribute in Studio while the game runs re-wires this element only.
         for _, attribute in WATCHED do
-            Scope.add(
-                adoptionScope,
-                instance:GetAttributeChangedSignal(attribute):Connect(function()
-                    rewire(element)
-                end)
-            )
+            Scope.add(adoptionScope, instance:GetAttributeChangedSignal(attribute):Connect(rewireThis))
         end
         --[[
             `UnrestIgnore` is structural rather than wiring, so it never joins the merge and
@@ -672,7 +673,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
                     typed:Release(instance)
                     return
                 end
-                rewire(element)
+                rewireThis()
             end)
         )
         Scope.add(
@@ -682,7 +683,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             end)
         )
 
-        rewire(element)
+        rewireThis()
         managedAdded:Fire(element)
 
         return element
