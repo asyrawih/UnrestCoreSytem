@@ -34,7 +34,13 @@ selene src && stylua --check src
   from stylua and selene (`.styluaignore`, `selene.toml`) for that reason, not by oversight.
   See `NOTICE.md`; when the Wally pin moves, re-copy it.
 - **The version is written twice** — `Constants.Version` and `src/shared/wally.toml`. There is
-  no way to make Luau read a manifest, so this one is kept in step by hand. Move both.
+  no way to make Luau read a manifest, so this one is kept in step by hand. Move both; CI
+  fails the build if they disagree, and the release workflow additionally requires the git tag
+  to match.
+- **CI is `.github/workflows/ci.yml`** and runs exactly the three checks above plus the two
+  invariants no tool can see: the version pair, and that `model.project.json` picks up nothing
+  from `src/game-*` or `bench/`. The setup shared with the release workflow lives in
+  `.github/actions/setup`; do not inline a second copy of it.
 - No `wait()` / `spawn()` / `delay()` — use `task.*`.
 - stylua: 4 spaces, width 120, `call_parentheses = "Always"`, `sort_requires` on (requires
   sorted alphabetically by variable name).

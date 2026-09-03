@@ -1,0 +1,33 @@
+name: Set up the Unrest toolchain
+description: >
+  Installs Rokit, then every tool pinned in rokit.toml, then the Wally packages and the
+  Roblox type definitions. Lives in one place because CI and Release both need exactly this
+  and a second copy is a second thing to keep in step.
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rokit
+      shell: bash
+      run: |
+        curl -sSf https://raw.githubusercontent.com/rojo-rbx/rokit/main/scripts/install.sh | bash
+        echo "$HOME/.rokit/bin" >> "$GITHUB_PATH"
+
+    - name: Install the pinned tools
+      shell: bash
+      # --no-trust-check is the documented CI flag: there is nobody here to answer a prompt.
+      # Versions come from rokit.toml, so CI and a developer's machine run the same binaries.
+      run: rokit install --no-trust-check
+
+    - name: Install Wally packages
+      shell: bash
+      # Required, not optional: the framework resolves Scythe through ReplicatedStorage.Packages
+      # in a source checkout, so the sourcemap has a hole in it without this.
+      run: wally install
+
+    - name: Fetch Roblox type definitions
+      shell: bash
+      run: |
+        curl -fsSL \
+          https://raw.githubusercontent.com/JohnnyMorganz/luau-lsp/main/scripts/globalTypes.PluginSecurity.d.luau \
+          -o /tmp/globalTypes.d.luau

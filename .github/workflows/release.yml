@@ -1,0 +1,74 @@
+name: Release
+
+# Tag the commit and push the tag:
+#
+#     git tag v0.2.0 && git push origin v0.2.0
+#
+# The tag must match the version in `src/shared/wally.toml`, which must in turn match
+# `Constants.Version`. The first step below refuses to go on if it does not.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+
+    permissions:
+      # `gh release create` writes to the repository. Nothing here needs more than that.
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ./.github/actions/setup
+
+      - name: The tag must match the version
+        # A release whose artefact reports a different version than its tag is a support
+        # question nobody can answer later.
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' src/shared/wally.toml | head -1)
+          code=$(sed -n 's/.*Version = "\([^"]*\)".*/\1/p' src/shared/Constants.luau | head -1)
+          echo "tag: $tag / manifest: $manifest / code: $code"
+          if [ "$tag" != "$manifest" ] || [ "$tag" != "$code" ]; then
+            echo "::error::Tag, wally.toml and Constants.Version must all agree."
+            exit 1
+          fi
+
+      # The same checks CI runs. A tag can be pushed at a commit CI never saw.
+      - name: Verify
+        run: |
+          rojo sourcemap default.project.json --output sourcemap.json
+          luau-lsp analyze --definitions=/tmp/globalTypes.d.luau --sourcemap=sourcemap.json $(find src -name '*.luau')
+          selene .
+          stylua --check .
+
+      - name: Build the distributable model
+        run: rojo build model.project.json --output Unrest.rbxm
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        # `gh` ships on the runner, so this needs no third-party action.
+        run: |
+          gh release create "$GITHUB_REF_NAME" Unrest.rbxm \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes
+
+      - name: Publish to Wally
+        # Skipped, not failed, when the secret is absent -- a GitHub release is useful on its
+        # own, and forcing every tag to also reach Wally would make an unset secret look like
+        # a broken build. Publishing runs from src/shared because Wally uploads the directory
+        # holding the manifest, and the root one is private.
+        env:
+          WALLY_AUTH_TOKEN: ${{ secrets.WALLY_AUTH_TOKEN }}
+        run: |
+          if [ -z "$WALLY_AUTH_TOKEN" ]; then
+            echo "::notice::WALLY_AUTH_TOKEN is not set; skipping the Wally publish."
+            exit 0
+          fi
+          cd src/shared
+          wally login --token "$WALLY_AUTH_TOKEN"
+          wally publish

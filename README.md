@@ -144,6 +144,39 @@ somebody else's scopes — a bug with no error message. `src/shared/Util/Scope.l
 is the only file that decides where Scythe is, it searches rather than naming a
 path, and `unrest.Scope` re-exports it so game code never has to ask again.
 
+## CI
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request:
+the three checks below, the version invariant, all three project files built, and
+`Unrest.rbxm` uploaded as an artefact. Tool versions come from `rokit.toml`, so CI
+runs the same binaries you do.
+
+Two things it checks that no tool can:
+
+* **The version is written twice** — `Constants.Version` and
+  `src/shared/wally.toml` — because Luau cannot read a manifest. CI fails if they
+  disagree.
+* **The model must contain the framework and nothing else.** A publishable
+  artefact that quietly shipped the sample game would be found by whoever
+  installed it, not by us.
+
+`.github/workflows/release.yml` runs on a tag:
+
+```sh
+git tag v0.2.0 && git push origin v0.2.0
+```
+
+It refuses to continue unless the tag, `src/shared/wally.toml` and
+`Constants.Version` all agree; then it re-runs the checks (a tag can be pushed at
+a commit CI never saw), builds the model, creates a GitHub release with
+`Unrest.rbxm` attached, and publishes to Wally **if** a `WALLY_AUTH_TOKEN` secret
+exists. Without the secret that last step is skipped rather than failed — a
+GitHub release is useful on its own, and an unset secret should not look like a
+broken build.
+
+To enable the Wally half: `wally login` locally, then copy the token out of
+`~/.rokit/auth.toml` into a repository secret named `WALLY_AUTH_TOKEN`.
+
 ## Lint and format
 
 ```sh

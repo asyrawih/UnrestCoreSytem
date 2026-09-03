@@ -3,8 +3,8 @@
 registry = "test"
 
 [[package]]
-name = "asyrawih/unrest-core-system"
-version = "0.1.0"
+name = "asyrawih/unrest-workspace"
+version = "0.0.0"
 dependencies = [["ByteNet", "elitriare/bytenet-max@1.0.0"], ["Scythe", "synttx/scythe@1.2.2"]]
 
 [[package]]
