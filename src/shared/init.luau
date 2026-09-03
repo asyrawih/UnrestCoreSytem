@@ -31,12 +31,14 @@
 local RunService = game:GetService("RunService")
 
 local Constants = require(script.Constants)
+local Scope = require(script.Util.Scope)
 local Types = require(script.Types)
 
 local AdaptersFactory = require(script.Adapters)
 local BridgeFactory = require(script.Bridge)
 local CoreFactory = require(script.Core)
 local ElementsFactory = require(script.Elements)
+local WidgetsFactory = require(script.Widgets)
 
 local context: Types.RuntimeContext = if RunService:IsServer() then "Server" else "Client"
 
@@ -45,12 +47,14 @@ local context: Types.RuntimeContext = if RunService:IsServer() then "Server" els
       Bridge   owns the command/channel bus and needs nothing else;
       Adapters is pure per-class knowledge;
       Elements adopts Studio UI, so it needs an adapter registry to resolve classes with
-               and a Bridge to route `UnrestCommand` attributes through.
+               and a Bridge to route `UnrestCommand` attributes through;
+      Widgets  groups adopted elements into controls, so it needs Elements to query through.
     Nothing points back up, so there is no cycle to break.
 ]]
 local bridge = BridgeFactory.new(context)
 local adapters = AdaptersFactory.new()
 local elements = ElementsFactory.new(adapters, bridge)
+local widgets = WidgetsFactory.new(elements, Constants.Tag, context)
 local core = CoreFactory.new()
 
 local Unrest = {
@@ -62,6 +66,8 @@ local Unrest = {
     Bridge = bridge,
     Adapters = adapters,
     Elements = elements,
+    Widgets = widgets,
+    Scope = Scope,
 }
 
 --- The one cast in the framework: the singleton is only complete once its methods exist.

@@ -61,7 +61,7 @@ require(script.Slider)(unrest, {
 ]]
 require(script.Toggle)(unrest, {
     Fullscreen = {
-        Initial = true,
+        Initial = false,
         OnChange = function(value: boolean)
             print(`fullscreen {if value then "on" else "off"}`)
         end,

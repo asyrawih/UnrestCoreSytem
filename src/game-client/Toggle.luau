@@ -28,7 +28,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TweenService = game:GetService("TweenService")
 
 local Types = require(ReplicatedStorage.Unrest.Types)
-local Widget = require(script.Parent.Widget)
 
 local REQUIRED = { "ToggleButton", "ToggleKnob" }
 local OPTIONAL = { "ToggleLabel" }
@@ -68,7 +67,7 @@ return function(unrest: Types.Unrest, config: Config?): ()
         end
     end)
 
-    local function onReady(group: string, parts: Widget.Parts): ()
+    local function onReady(group: string, parts: Types.WidgetParts, scope: Types.Scope): ()
         seen[group] = true
 
         local mine: Actions = actions[group] or {}
@@ -122,31 +121,36 @@ return function(unrest: Types.Unrest, config: Config?): ()
 
         paint(false)
 
-        --- A resize moves both ends, so the knob has to be put back where it now belongs.
-        knob:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-            paint(false)
-        end)
-
         --[[
-            One query per switch, filtered to this switch's own button. The `pressed ~= button`
-            guard is what keeps two switches from answering each other's clicks -- the same
-            reason `Widget.drag` checks its handle.
-        ]]
-        unrest:Query({ Tag = unrest.Tag, Selector = "GuiButton", Role = "ToggleButton" }, {
-            Active = function(pressed: Instance)
-                if pressed ~= button then
-                    return
-                end
+            Both connections go on the scope the framework handed over, so untagging the switch
+            or rebuilding the screen takes them with it.
 
+            `button.Activated` rather than a query on the `ToggleButton` role. A query would
+            match every switch on screen and need a `pressed ~= button` guard to throw away the
+            other switches' presses -- one query and one set of watchers per switch, to learn
+            something we are already holding. `Activated` is the same event the framework's own
+            `Active` handler binds to on a GuiButton, minus the search for the button.
+        ]]
+        unrest.Scope.addBulk(
+            scope,
+            --- A resize moves both ends, so the knob has to be put back where it now belongs.
+            knob:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
+                paint(false)
+            end),
+            button.Activated:Connect(function()
                 state = not state
                 paint(true)
 
                 if mine.OnChange ~= nil then
                     mine.OnChange(state)
                 end
-            end,
-        })
+            end)
+        )
     end
 
-    Widget.each(unrest, REQUIRED, onReady, OPTIONAL)
+    unrest.Widgets:Each({
+        Required = REQUIRED,
+        Optional = OPTIONAL,
+        OnReady = onReady,
+    })
 end

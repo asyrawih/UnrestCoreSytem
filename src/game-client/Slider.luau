@@ -38,7 +38,6 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Types = require(ReplicatedStorage.Unrest.Types)
-local Widget = require(script.Parent.Widget)
 
 local ROLES = { "SliderTrack", "SliderFill", "SliderKnob", "SliderLabel" }
 
@@ -64,49 +63,53 @@ return function(unrest: Types.Unrest, config: Config?): ()
     ]]
     task.delay(5, function()
         for group in actions do
-            print(`seen group {group}`)
             if not seen[group] then
                 warn(`[Slider] actions were given for "{group}" but no slider carries that UnrestGroup.`)
             end
         end
     end)
 
-    Widget.each(unrest, ROLES, function(group: string, parts: Widget.Parts)
-        seen[group] = true
+    unrest.Widgets:Each({
+        Required = ROLES,
 
-        print(`seen group {seen[group]}`)
+        OnReady = function(group: string, parts: Types.WidgetParts, scope: Types.Scope)
+            seen[group] = true
 
-        local mine: Actions = actions[group] or {}
-        local track = parts.SliderTrack :: Frame
-        local fill = parts.SliderFill :: Frame
-        local knob = parts.SliderKnob :: GuiObject
-        local label = parts.SliderLabel :: TextLabel
+            local mine: Actions = actions[group] or {}
+            local track = parts.SliderTrack :: Frame
+            local fill = parts.SliderFill :: Frame
+            local knob = parts.SliderKnob :: GuiObject
+            local label = parts.SliderLabel :: TextLabel
 
-        --- Paints, publishes, and returns the whole-number value the caller sees.
-        local function paint(fraction: number): number
-            local value = math.round(fraction * 100)
+            --- Paints, publishes, and returns the whole-number value the caller sees.
+            local function paint(fraction: number): number
+                local value = math.round(fraction * 100)
 
-            fill.Size = UDim2.fromScale(fraction, 1)
-            knob.Position = UDim2.fromScale(fraction, 0.5)
-            label.Text = `{group}: {value}%`
-            unrest.Bridge:Publish(`Volume.{group}`, value)
+                fill.Size = UDim2.fromScale(fraction, 1)
+                knob.Position = UDim2.fromScale(fraction, 0.5)
+                label.Text = `{group}: {value}%`
+                unrest.Bridge:Publish(`Volume.{group}`, value)
 
-            return value
-        end
-
-        paint(0)
-
-        local function onCommit(fraction: number): ()
-            if mine.OnCommit ~= nil then
-                mine.OnCommit(math.round(fraction * 100))
+                return value
             end
-        end
 
-        Widget.drag(unrest, knob, track, function(fraction: number)
-            local value = paint(fraction)
-            if mine.OnChange ~= nil then
-                mine.OnChange(value)
-            end
-        end, onCommit)
-    end)
+            paint(0)
+
+            --[[
+                The drag goes on the scope the framework handed over, so a screen that is
+                rebuilt -- or a slider that is untagged while the game runs -- takes its own
+                input connections with it instead of leaving them attached to a dead knob.
+            ]]
+            unrest.Widgets:Drag(scope, knob, track, function(fraction: number)
+                local value = paint(fraction)
+                if mine.OnChange ~= nil then
+                    mine.OnChange(value)
+                end
+            end, function(fraction: number)
+                if mine.OnCommit ~= nil then
+                    mine.OnCommit(math.round(fraction * 100))
+                end
+            end)
+        end,
+    })
 end

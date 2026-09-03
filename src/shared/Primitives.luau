@@ -32,6 +32,18 @@ export type Maid = {
     IsDestroyed: (self: Maid) -> boolean,
 }
 
+--[[
+    A cleanup scope: an opaque integer handle into Scythe's storage.
+
+    It is a plain number so that holding one costs nothing -- a map of scopes is a map of
+    numbers, not a map of tables. Never do arithmetic on it and never invent one: the handle
+    packs a slot index and a generation counter, and a fabricated value either misses or,
+    worse, addresses somebody else's scope.
+
+    Declared here rather than imported so this module keeps its no-requires rule.
+]]
+export type Scope = number
+
 --- Minimal, dependency-free signal.
 export type Signal<T...> = {
     Connect: (self: Signal<T...>, handler: (T...) -> ()) -> Connection,

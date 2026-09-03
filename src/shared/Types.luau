@@ -23,6 +23,9 @@
 
 local AdapterTypes = require(script.Parent.Adapters.Types)
 local Primitives = require(script.Parent.Primitives)
+-- Required for its type alone; selene cannot see a type-position use, hence the allow.
+-- selene: allow(unused_variable)
+local ScopeModule = require(script.Parent.Util.Scope)
 
 --------------------------------------------------------------------------------
 -- Re-exports
@@ -36,6 +39,13 @@ export type Disconnectable = Primitives.Disconnectable
 export type MaidTask = Primitives.MaidTask
 export type Maid = Primitives.Maid
 export type Signal<T...> = Primitives.Signal<T...>
+export type Scope = Primitives.Scope
+--[[
+    Scythe's own surface, taken from the module rather than restated here. Retyping a library
+    by hand is how the two drift: the copy is right the day it is written and silently wrong
+    the first time the library gains an argument.
+]]
+export type ScopeLibrary = typeof(ScopeModule)
 
 export type ElementHandler = AdapterTypes.ElementHandler
 export type Handlers = AdapterTypes.Handlers
@@ -126,6 +136,62 @@ export type Bridge = {
 }
 
 --------------------------------------------------------------------------------
+-- Widgets: several parts that only mean something together
+--------------------------------------------------------------------------------
+
+--- The instances of one widget, keyed by role. Optional roles may be absent.
+export type WidgetParts = { [string]: Instance? }
+
+--[[
+    What `Unrest.Widgets:Each` needs to know.
+
+    `Required` is the contract: a group is a widget only once every role listed here has been
+    adopted, and it stops being one the moment any of them leaves. `Optional` roles are
+    collected into the same table but never hold the call back -- one that arrives late simply
+    appears in `parts`, which a handler holding the reference will see.
+
+    `OnReady` is handed a cleanup scope. Put every connection the widget makes on it and the
+    framework will undo them when the widget comes apart; a widget that is rebuilt then gets a
+    fresh scope rather than a second set of live handlers on top of the first.
+]]
+export type WidgetSpec = {
+    Required: { string },
+    Optional: { string }?,
+    OnReady: (group: string, parts: WidgetParts, scope: Scope) -> (),
+}
+
+--- Stops one `Each`. Wired widgets are torn down; the shared query stays for the others.
+export type WidgetHandle = {
+    Destroy: (self: WidgetHandle) -> (),
+}
+
+export type WidgetLibrary = {
+    --- Calls `OnReady(group, parts, scope)` once per `UnrestGroup` whose required roles are all present.
+    Each: (self: WidgetLibrary, spec: WidgetSpec) -> WidgetHandle,
+    --[[
+        Turns pressing `handle` into a stream of 0..1 positions along `track`, ending when the
+        pointer is released anywhere on screen rather than only over the handle.
+
+        `onMove` fires throughout the gesture; `onCommit` fires once, at the value the player
+        settled on. Keep them apart when the two cost different amounts -- a volume slider
+        wants every move because the player is listening, while a seek that reloads wants only
+        the last one.
+
+        Everything is parked on `scope`. The returned scope covers just the gesture in flight,
+        for a caller that needs to cancel a drag without dismantling the widget.
+    ]]
+    Drag: (
+        self: WidgetLibrary,
+        scope: Scope,
+        handle: Instance,
+        track: Instance,
+        onMove: (fraction: number) -> (),
+        onCommit: ((fraction: number) -> ())?
+    ) -> Scope,
+    Destroy: (self: WidgetLibrary) -> (),
+}
+
+--------------------------------------------------------------------------------
 -- The singleton
 --------------------------------------------------------------------------------
 
@@ -141,6 +207,18 @@ export type Unrest = {
     Adapters: AdapterRegistry,
     --- Adopted Studio UI. Client-only; on the server it exists but adopts nothing.
     Elements: ElementManager,
+    --[[
+        Multi-part controls: sliders, toggles, anything whose parts only mean something
+        together. Client-only, and the layer to reach for before writing a query by hand.
+    ]]
+    Widgets: WidgetLibrary,
+    --[[
+        The framework's cleanup library, re-exported so game code and framework code share one
+        copy. Scopes are integer handles into module storage, so two copies of the module would
+        mint handles that mean different things; requiring it from here can only ever be the
+        same copy the framework uses.
+    ]]
+    Scope: ScopeLibrary,
 
     Start: (self: Unrest) -> Unrest,
     Stop: (self: Unrest) -> (),

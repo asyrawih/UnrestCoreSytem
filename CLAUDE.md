@@ -16,7 +16,11 @@ selene src && stylua --check src
 
 ## Constraints
 
-- `--!strict` everywhere, zero third-party dependencies.
+- `--!strict` everywhere. **One** third-party dependency: `synttx/scythe`, and it is deliberate
+  — it replaced the framework's largest source of allocation. Its path is written in exactly
+  one file, `src/shared/Util/Scope.luau`; requiring `Packages.Scythe` anywhere else risks a
+  second copy of the module, whose scope handles silently mean something different.
+  Adding a second dependency needs a reason of the same size.
 - No `wait()` / `spawn()` / `delay()` — use `task.*`.
 - stylua: 4 spaces, width 120, `call_parentheses = "Always"`, `sort_requires` on (requires
   sorted alphabetically by variable name).
@@ -27,8 +31,10 @@ selene src && stylua --check src
 - **Code raises; attributes warn.** Code binding a handler its element cannot support is a
   bug and throws. The same mistake made in an attribute is *data*, typed by somebody not
   watching the output window — warn, name the element and the fix, and keep the screen up.
-- Every connection an element owns hangs off a `Util/Maid`, so release is one line and
-  cannot half-happen.
+- Every connection an element owns hangs off a **cleanup scope** (`src/shared/Util/Scope.luau`,
+  re-exported as `Unrest.Scope`), so release is one line and cannot half-happen. A scope is an
+  integer, not an object: hold it in a plain field, pass it around freely, and hand it to
+  `Scope.add` to link it as a child of a longer-lived scope.
 - **Raising must not leave half a set behind.** `Adapters.bind` checks the whole handler
   table before it connects anything, so a raise means nothing was wired; `Query` therefore
   binds an element *before* recording it, and `QueryHandle:Bind` proposes the merge against a
@@ -120,7 +126,7 @@ Where things are allowed to live:
 
 | | |
 | --- | --- |
-| `default.project.json` mounts | `src/shared`, `src/server`, `src/client`, `Packages` — **and nothing else** |
+| `default.project.json` mounts | `src/shared` (framework), `src/game-net`, `src/game-server`, `src/game-client` (the game's own), `Packages` — **and nothing else** |
 | UI instances | only in the place file, created in Studio or via the Studio MCP |
 | `studio/*.luau` | one-off command-bar seed scripts. **Not** a Rojo mount — never add one |
 | `.gitignore` | already ignores `*.rbxl` / `*.rbxlx` / `*.rbxm` / `*.rbxmx`; keep it that way |
