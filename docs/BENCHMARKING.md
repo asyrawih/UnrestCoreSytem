@@ -107,7 +107,26 @@ return {
 }
 ```
 
-Empat aturan yang menggigit kalau dilanggar:
+Lima aturan yang menggigit kalau dilanggar:
+
+0. **`script` tidak berguna di dalam berkas bench.** Scriptbench meng-`require` modulmu lewat
+   **klon**, dan klon itu tidak punya induk — jadi `script.Parent` bernilai `nil` dan require
+   relatif apa pun mati dengan `attempt to index nil with '...'`, bahkan sebelum plugin-nya
+   sempat membaca nama bench-mu. Semua yang kamu butuhkan harus dijangkau dari sebuah
+   service:
+
+   ```lua
+   local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+   local Selector = require(ReplicatedStorage.Unrest.Adapters.Selector)   -- benar
+   local Maid = require(script.Parent.Baseline.Maid)                      -- MATI
+   ```
+
+   Dan jangan menyebut nama folder bench-nya secara harfiah kalau bisa dihindari. Nama itu
+   keputusan mount di `bench.project.json`; menggantinya di sana, atau menggeser foldernya di
+   Studio, tidak boleh membuat bench-mu mati tanpa penjelasan. `bench/Cleanup.bench.luau`
+   mencari `Baseline` di bawah `ReplicatedStorage` lalu melempar kalimat yang bisa dibaca
+   kalau tidak ketemu — tiru pola itu.
 
 1. **Jangan pernah yield.** Tidak ada `task.wait`, tidak ada `WaitForChild`. Angka dari
    fungsi yang yield adalah sampah.
@@ -119,7 +138,7 @@ Empat aturan yang menggigit kalau dilanggar:
    bergantung pada apa pun yang cuma ada saat Play, dan sadari bahwa instance yang dibuat
    `BeforeAll` benar-benar muncul di berkasmu sampai `AfterAll` menghapusnya.
 
-Titik 4 itu juga alasan `bench/Query.bench.luau` membangun pohonnya di bawah
+Aturan 4 itu juga alasan `bench/Query.bench.luau` membangun pohonnya di bawah
 `ReplicatedStorage` dan merapikannya lagi. Kalau sebuah run terhenti di tengah jalan, hapus
 `ReplicatedStorage.UnrestBenchFixture` dengan tangan.
 

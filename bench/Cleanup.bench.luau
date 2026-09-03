@@ -40,7 +40,51 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Maid = require(script.Parent.Baseline.Maid)
+--[[
+    HOW A BENCH FILE IS ALLOWED TO REQUIRE THINGS.
+
+    Scriptbench requires a `.bench` module through a CLONE of it, and that clone has no
+    parent. So `script` is useless in here: `script.Parent` is nil, and a relative require
+    dies with "attempt to index nil with ..." before the picker can even read the file's
+    name. Everything a bench file needs must be reached from a service instead.
+
+    The folder is searched for rather than named, too. Its name is a mount decision that
+    lives in `bench.project.json`, and renaming it there -- or dragging the folder around in
+    Studio -- must not turn this into a nil index with no explanation attached.
+]]
+local function baseline(name: string): ModuleScript
+    for _, child in ReplicatedStorage:GetChildren() do
+        local folder = child:FindFirstChild("Baseline")
+        if folder ~= nil then
+            local module = folder:FindFirstChild(name)
+            if module ~= nil and module:IsA("ModuleScript") then
+                return module
+            end
+        end
+    end
+
+    error(
+        `[Bench] cannot find Baseline.{name} anywhere under ReplicatedStorage. `
+            .. `Build the place with bench.project.json rather than default.project.json -- `
+            .. `that is the project file that mounts bench/ into the DataModel.`,
+        0
+    )
+end
+
+--[[
+    `require` is cast because luau-lsp resolves require paths statically and cannot see
+    through the lookup above -- without the cast it reports "unsupported path". The shape is
+    then pinned by hand so the benchmark bodies below are still type-checked: this is a
+    deleted module's historical API, so pinning it here cannot drift out of step with
+    anything that is still alive.
+]]
+type BaselineMaid = {
+    Add: (self: BaselineMaid, item: any, key: string?) -> any,
+    Clean: (self: BaselineMaid) -> (),
+    Destroy: (self: BaselineMaid) -> (),
+}
+
+local Maid = (require :: any)(baseline("Maid")) :: { new: () -> BaselineMaid }
 --[[
     Scythe is required through the framework's re-export, never through
     `ReplicatedStorage.Packages.Scythe` directly.

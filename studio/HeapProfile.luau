@@ -26,7 +26,30 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
-local Maid = require(ReplicatedStorage.Bench.Baseline.Maid)
+--[[
+    Dicari, bukan disebut namanya. Nama folder `Bench` itu keputusan mount di
+    `bench.project.json`, dan mengganti namanya di sana -- atau menggeser foldernya di Studio
+    -- tidak boleh membuat skrip ini mati dengan "index nil" tanpa penjelasan.
+]]
+local function baseline(name: string): ModuleScript
+    for _, child in ReplicatedStorage:GetChildren() do
+        local folder = child:FindFirstChild("Baseline")
+        if folder ~= nil then
+            local module = folder:FindFirstChild(name)
+            if module ~= nil and module:IsA("ModuleScript") then
+                return module
+            end
+        end
+    end
+
+    error(
+        `[HeapProfile] Baseline.{name} tidak ketemu di ReplicatedStorage. `
+            .. `Bangun place-nya dengan bench.project.json, bukan default.project.json.`,
+        0
+    )
+end
+
+local Maid = require(baseline("Maid"))
 local Scope = require(ReplicatedStorage.Unrest.Util.Scope)
 
 local CONTAINERS = 1000
