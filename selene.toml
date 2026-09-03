@@ -6,6 +6,10 @@
 # selene, run `selene generate-roblox-std` once and commit the result.
 std = "roblox"
 
+# Third-party code we neither wrote nor may reformat. `vendor/Scythe.luau` is a verbatim
+# MPL-2.0 copy (see NOTICE.md); `Packages/` is Wally's tree, rewritten by `wally install`.
+exclude = ["vendor/**", "Packages/**", "DevPackages/**", "ServerPackages/**"]
+
 [rules]
 # Framework code must never leak into _G / shared.
 global_usage = "deny"

@@ -17,10 +17,24 @@ selene src && stylua --check src
 ## Constraints
 
 - `--!strict` everywhere. **One** third-party dependency: `synttx/scythe`, and it is deliberate
-  — it replaced the framework's largest source of allocation. Its path is written in exactly
-  one file, `src/shared/Util/Scope.luau`; requiring `Packages.Scythe` anywhere else risks a
-  second copy of the module, whose scope handles silently mean something different.
+  — it replaced the framework's largest source of allocation. **There must only ever be one
+  copy of it in a place**: scope handles are indices into module-level storage, so a second
+  copy mints handles that address somebody else's scopes, with no error to show for it.
+  `src/shared/Util/Scope.luau` is the only file that decides where Scythe is, and it *searches*
+  rather than naming a path, because the framework ships three ways and Scythe lands somewhere
+  different in each — beside the package folder (Wally), at `ReplicatedStorage.Packages.Scythe`
+  (source checkout), or vendored as `Unrest.Scythe` (Creator Store model, which has no package
+  manager behind it). Requiring Scythe anywhere else, by any path, reintroduces the second copy.
   Adding a second dependency needs a reason of the same size.
+- **Three project files, three audiences.** `default.project.json` is what you develop against;
+  `bench.project.json` adds `bench/`; `model.project.json` is the framework alone plus the
+  vendored Scythe, and is what the Creator Store model is built from. `src/shared/wally.toml`
+  is the publishable manifest — the root one is `private` and exists only for `wally install`.
+- **`vendor/Scythe.luau` is a verbatim MPL-2.0 copy and must stay verbatim.** It is excluded
+  from stylua and selene (`.styluaignore`, `selene.toml`) for that reason, not by oversight.
+  See `NOTICE.md`; when the Wally pin moves, re-copy it.
+- **The version is written twice** — `Constants.Version` and `src/shared/wally.toml`. There is
+  no way to make Luau read a manifest, so this one is kept in step by hand. Move both.
 - No `wait()` / `spawn()` / `delay()` — use `task.*`.
 - stylua: 4 spaces, width 120, `call_parentheses = "Always"`, `sort_requires` on (requires
   sorted alphabetically by variable name).

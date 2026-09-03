@@ -55,7 +55,13 @@ someone who believed they were game code.
 rojo build -o UnrestCoreSystem.rbxl        # place file
 rojo build -o UnrestCoreSystem.rbxm        # model file
 rojo build bench.project.json -o bench.rbxl   # place file with the benchmarks
+rojo build model.project.json -o Unrest.rbxm  # the framework alone, for the Creator Store
 ```
+
+Three project files, three audiences. `default.project.json` is what you develop
+against. `bench.project.json` is the same tree plus `bench/`. `model.project.json`
+is the framework and nothing else — no game code, no benchmarks — with Scythe
+vendored inside it, because a model has no package manager behind it.
 
 Build artifacts are gitignored.
 
@@ -85,6 +91,58 @@ wally install     # writes ./Packages and wally.lock
 Note: `wally install` rewrites `Packages/_Index` wholesale, which makes a running
 `rojo sourcemap --watch` panic. The Neovim wrapper described below restarts Rojo
 automatically when that happens.
+
+## Publishing
+
+Two channels, and they are not equivalent.
+
+| | Wally | Creator Store |
+| --- | --- | --- |
+| Audience | people already using Rojo | people working directly in Studio |
+| Dependencies | resolved for you | **none** — a model is a flat tree of Instances |
+| Updating | `wally install` | re-insert by hand |
+
+### Wally
+
+The publishable manifest is `src/shared/wally.toml`, **not** the one at the root.
+Wally uploads the directory holding the manifest, so publishing from `src/shared`
+ships the framework and none of the game. The root manifest is `private = true`
+so it cannot be published by accident.
+
+```sh
+wally login                      # authenticates through GitHub
+cd src/shared && wally publish
+```
+
+The scope (`asyrawih`) must be a GitHub account or org you own. Add `repository`
+to `src/shared/wally.toml` once the code is pushed somewhere.
+
+### Creator Store
+
+```sh
+rojo build model.project.json -o Unrest.rbxm
+```
+
+Then in Studio: insert the model, right-click it, **Save to Roblox**. Then on the
+Creator Dashboard, under Development Items, open it, fill in Name and
+Description, toggle on **Distribute on Creator Store** under Distribution, set a
+price (USD; models cannot be priced in Robux), and save.
+
+To publish at all your account needs to be at least two days old, free of recent
+bans, and verified by an age check or government ID — phone verification is not
+enough. To sell you also need to be 18+ (or 13–17 with parental consent), have
+2-Step Verification on, and live in a country the payments provider supports.
+
+Mention in the description that the model bundles Scythe under MPL-2.0; see
+`NOTICE.md`.
+
+### The one rule that spans both
+
+**There must only ever be one copy of Scythe in a place.** Its scope handles are
+indices into module-level storage, so a second copy mints handles that address
+somebody else's scopes — a bug with no error message. `src/shared/Util/Scope.luau`
+is the only file that decides where Scythe is, it searches rather than naming a
+path, and `unrest.Scope` re-exports it so game code never has to ask again.
 
 ## Lint and format
 

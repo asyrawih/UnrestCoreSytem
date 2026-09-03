@@ -1,0 +1,14 @@
+{
+  "name": "Unrest",
+  "globIgnorePaths": [
+    "**/*.toml",
+    "**/*.md",
+    "**/*.lock"
+  ],
+  "tree": {
+    "$path": "src/shared",
+    "Scythe": {
+      "$path": "vendor/Scythe.luau"
+    }
+  }
+}

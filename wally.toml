@@ -1,16 +1,24 @@
+# The DEVELOPMENT manifest for the whole workspace: the framework, the sample game, and the
+# benchmarks. It is `private` because it is not the thing anyone installs -- the publishable
+# manifest is `src/shared/wally.toml`, and `wally publish` is run from there so that the
+# upload contains the framework and none of the rest.
+#
+# `wally install` here still writes ./Packages, which both realms and the benchmarks use.
+
 [package]
-name = "asyrawih/unrest-core-system"
-version = "0.1.0"
-realm = "shared"
+name = "asyrawih/unrest-workspace"
+version = "0.0.0"
+license = "MIT"
 registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+private = true
 
 [dependencies]
-# Dipakai kode game untuk remote-nya sendiri. Framework tidak menyentuhnya.
+# The game's own remotes, in `src/game-net`. The framework never touches it, and it is
+# absent from the published manifest for exactly that reason -- shipping it would force
+# every consumer to pull a transport they did not ask for.
 ByteNet = "elitriare/bytenet-max@1.0.0"
-# The framework's one dependency. Cleanup scopes: integer handles into Structure-of-Arrays
-# storage rather than a container object per scope. Required through `Unrest.Util.Scope`,
-# which is the only file allowed to name this path -- two copies of the module would mint
-# handles that mean different things.
+# The framework's one dependency. See `src/shared/wally.toml`.
 Scythe = "synttx/scythe@1.2.2"
 
 [dev-dependencies]

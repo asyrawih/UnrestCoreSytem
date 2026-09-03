@@ -1,0 +1,29 @@
+# The PUBLISHABLE manifest. `wally publish` is run from this directory, not from the
+# repository root, and that is deliberate: what Wally uploads is the directory holding the
+# manifest, so publishing from here ships the framework and nothing else. The root manifest
+# is a development one and is marked private so it can never be published by mistake.
+#
+# Before the first publish:
+#   * add `repository` below once the code is on GitHub -- omitted rather than guessed;
+#   * the Wally scope `asyrawih` must be a GitHub account or org you own, since `wally login`
+#     authenticates through GitHub;
+#   * `version` here and `Constants.Version` in `Constants.luau` are the same number written
+#     twice. Move them together.
+#
+#   wally login
+#   cd src/shared && wally publish
+
+[package]
+name = "asyrawih/unrest-core-system"
+version = "0.2.0"
+description = "A UI framework for Roblox that builds no UI: it adopts what you already built in Studio, opted in with one CollectionService tag."
+license = "MIT"
+authors = ["asyrawih"]
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+[dependencies]
+# The framework's only dependency, and it is reached through `Util/Scope.luau` -- the one
+# file allowed to decide where Scythe lives. Two copies of that module would mint scope
+# handles that mean different things, so there must only ever be one.
+Scythe = "synttx/scythe@1.2.2"

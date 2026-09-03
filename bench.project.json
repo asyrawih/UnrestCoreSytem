@@ -1,11 +1,14 @@
 {
   "name": "UnrestCoreSystem-bench",
+  "globIgnorePaths": [
+    "**/*.toml",
+    "**/*.md",
+    "**/*.lock"
+  ],
   "tree": {
     "$className": "DataModel",
-
     "ReplicatedStorage": {
       "$className": "ReplicatedStorage",
-
       "Unrest": {
         "$path": "src/shared"
       },
@@ -25,7 +28,6 @@
 
     "ServerScriptService": {
       "$className": "ServerScriptService",
-
       "Game": {
         "$path": "src/game-server"
       }
@@ -34,10 +36,8 @@
     "StarterPlayer": {
       "$className": "StarterPlayer",
       "$ignoreUnknownInstances": true,
-
       "StarterPlayerScripts": {
         "$className": "StarterPlayerScripts",
-
         "Game": {
           "$path": "src/game-client"
         }

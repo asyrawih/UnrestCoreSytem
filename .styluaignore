@@ -1,0 +1,15 @@
+# Third-party code. Not ours to reformat.
+#
+# vendor/Scythe.luau is a verbatim copy of an MPL-2.0 file (see NOTICE.md). Reformatting it
+# would both modify a file whose licence attaches obligations to modification, and make the
+# copy drift from the upstream it must be diffable against.
+vendor/
+
+# Wally's installed tree, rewritten wholesale by `wally install`.
+Packages/
+DevPackages/
+ServerPackages/
+
+# Docs site toolchain.
+node_modules/
+build/
