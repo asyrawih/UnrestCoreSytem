@@ -238,7 +238,11 @@ kontraknya sebelum handler dipanggil.
   untuk pemain lain; traceback-nya dicatat di sisi server dan pemanggil hanya dapat
   `HandlerError`.
 
-Simpan `Connection`-nya di `Maid` sistemmu supaya ikut terlepas saat sistemnya `Destroy`.
+Simpan `Connection`-nya di sebuah cleanup scope (`unrest.Scope`) supaya ikut terlepas saat sistemnya `Destroy`:
+
+```lua
+unrest.Scope.add(scope, unrest.Bridge:Subscribe("Koin", function(nilai) ... end))
+```
 
 ---
 

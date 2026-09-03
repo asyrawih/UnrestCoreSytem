@@ -56,7 +56,7 @@ framework.
 | Lapis | Tinggal di | Boleh bergantung pada | Tidak pernah |
 | --- | --- | --- | --- |
 | `Primitives` | ReplicatedStorage | tidak apa-apa | — |
-| `Util` (Signal, Maid, Resolver) | ReplicatedStorage | Primitives | state game |
+| `Util` (Signal, Scope, Resolver) | ReplicatedStorage | Primitives | state game |
 | `Core` | registry di shared, sistem di sisi game-server | Bridge, Util | Instance, UI, layar pemain |
 | `Bridge` | ReplicatedStorage | Net, Util | tahu tombol itu apa |
 | `Net` | kontrak di shared, gerbang khusus server | tipe Bridge, Constants | memercayai payload |
@@ -196,10 +196,10 @@ Tiga pola yang dipaksakan checker strict:
 ```
 src/shared/            ReplicatedStorage.Unrest — direplikasi, anggap setiap client membacanya
   init.luau            composition root; singleton-nya
-  Primitives.luau      tipe Signal/Maid/Connection, nol require
+  Primitives.luau      tipe Signal/Scope/Connection, nol require
   Types.luau           permukaan tipe publik, meng-export ulang dua di bawah
   Constants.luau       tag, nama atribut, nama remote, batas keras
-  Util/                Signal, Maid, Resolver
+  Util/                Signal, Scope (Scythe), Resolver
   Core/init.luau       registry sistem dan siklus hidupnya
   Bridge/init.luau     publish/subscribe, dispatch/invoke, perutean jaringan
   Net/                 Types, Contracts, Client, Validate, Transport — pengetahuan publik saja

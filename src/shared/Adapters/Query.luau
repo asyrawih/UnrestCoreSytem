@@ -130,7 +130,12 @@ function Query.new(
 
     local watchedProperties, watchedAttributes = Selector.triggers(compiled)
     local ancestorAttributes = Selector.ancestorTriggers(compiled)
-    local watchesAncestors = Selector.watchesAncestors(compiled)
+    --[[
+        Asked of the list rather than of `Selector.watchesAncestors`, which answers by building
+        the very list already in hand. Calling it here ran `triggers` a third time for one
+        boolean.
+    ]]
+    local watchesAncestors = #ancestorAttributes > 0
     local hint = `Narrow the query {compiled.Text} with a Selector or a Role, or drop that handler.`
 
     local tag = compiled.Tag
@@ -215,7 +220,8 @@ function Query.new(
         end
 
         local binding = Scope.scope()
-        Adapters.bind(registry, element, bound, binding, hint)
+        -- The rejection above is the pre-flight, so binding must not run it a second time.
+        Adapters.bindChecked(registry, element, bound, binding, hint)
 
         bindings[element] = binding
         table.insert(elements, element)
@@ -430,8 +436,14 @@ function Query.new(
         if type(visitor) ~= "function" then
             error(`[Unrest.Query] :Each expects a function, got {typeof(visitor)}.`, 0)
         end
-        for _, element in table.clone(elements) do
-            visitor(element, nil)
+        --[[
+            Walked backwards over the live array rather than over a clone. A visitor that
+            removes the element it is handed -- the reason the clone was here -- only ever
+            shortens the array behind the cursor, so an index counting down never skips and
+            never re-visits. One table per `:Each` call saved, and a game may call it in a loop.
+        ]]
+        for index = #elements, 1, -1 do
+            visitor(elements[index], nil)
         end
         return typed
     end
@@ -471,7 +483,7 @@ function Query.new(
         ]]
         for element, binding in bindings do
             Scope.clean(binding)
-            Adapters.bind(registry, element, bound, binding, hint)
+            Adapters.bindChecked(registry, element, bound, binding, hint)
         end
 
         return typed

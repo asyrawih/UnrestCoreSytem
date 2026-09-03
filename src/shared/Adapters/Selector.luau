@@ -143,20 +143,49 @@ end
     and it belongs beside the rule that produced it rather than beside the code that prints it.
 ]]
 
-local function ownSource(): Types.AttributeSource
-    return { Origin = "Own", Text = "set here" }
-end
+--[[
+    `Own` carries nothing element-specific, so it is one frozen table shared by every
+    resolution rather than a fresh one per attribute per element. It is the common answer --
+    most attributes that resolve at all were written on the instance itself.
+]]
+local OWN_SOURCE: Types.AttributeSource = table.freeze({ Origin = "Own" :: Types.AttributeOrigin, Text = "set here" })
+
+--[[
+    The other two do name something specific and so must allocate, but their `Text` is built
+    on read rather than on creation.
+
+    `Text` exists for two diagnostics -- the unknown-preset warning and `Elements.describe` --
+    and both are read by a person, rarely. Building the phrase eagerly meant a string and two
+    Instance property reads for every inherited attribute on every element, to produce a
+    sentence almost nobody ever sees.
+]]
+local PRESET_TEXT = {
+    __index = function(source: any, key: string): any
+        if key ~= "Text" then
+            return nil
+        end
+        return `from preset "{source.Preset}"`
+    end,
+}
+
+local INHERITED_TEXT = {
+    __index = function(source: any, key: string): any
+        if key ~= "Text" then
+            return nil
+        end
+        local ancestor: Instance = source.Ancestor
+        return `inherited from {ancestor.Name} ({ancestor.ClassName})`
+    end,
+}
 
 local function presetSource(preset: string): Types.AttributeSource
-    return { Origin = "Preset", Preset = preset, Text = `from preset "{preset}"` }
+    local source = setmetatable({ Origin = "Preset" :: Types.AttributeOrigin, Preset = preset }, PRESET_TEXT)
+    return (source :: any) :: Types.AttributeSource
 end
 
 local function inheritedSource(ancestor: Instance): Types.AttributeSource
-    return {
-        Origin = "Inherited",
-        Ancestor = ancestor,
-        Text = `inherited from {ancestor.Name} ({ancestor.ClassName})`,
-    }
+    local source = setmetatable({ Origin = "Inherited" :: Types.AttributeOrigin, Ancestor = ancestor }, INHERITED_TEXT)
+    return (source :: any) :: Types.AttributeSource
 end
 
 --[[
@@ -181,7 +210,72 @@ function Selector.inheritedProviders(instance: Instance, names: { string }): { [
     return providers
 end
 
-local PRESET_ONLY: { string } = { ATTRIBUTES.Preset }
+--[[
+    The same inheritable set as `INHERITABLE`, as an array, derived from it once at load.
+    Sorted so a resolution walks the names in a fixed order and two runs cannot differ.
+]]
+local INHERITABLE_NAMES: { string } = {}
+for name in INHERITABLE do
+    table.insert(INHERITABLE_NAMES, name)
+end
+table.sort(INHERITABLE_NAMES)
+
+--[[
+    Everything about an element's ancestry and preset that answering one attribute needs, and
+    that answering the next one would otherwise re-derive.
+
+    Resolving a single attribute costs a walk to the ScreenGui -- once for the preset layer and
+    again for the inherited layer -- and `Elements` resolves nine of them per element, on
+    adoption and again on every edit to any watched attribute on the element or on any ancestor.
+    That was fifteen walks and better than thirty tables to answer a question whose inputs are
+    identical across all nine. Gathered here, it is one walk and three tables.
+
+    Hold one of these only for the length of a resolution. It is a snapshot of the tree, and
+    the tree is exactly what changes underneath it.
+]]
+export type Resolution = {
+    Instance: Instance,
+    --- Nearest ancestor setting each inheritable name. A name absent here is one nobody sets.
+    Providers: { [string]: Instance },
+    PresetName: string?,
+    Preset: Presets.Preset?,
+    PresetSource: Types.AttributeSource?,
+}
+
+function Selector.resolution(instance: Instance): Resolution
+    local providers = Selector.inheritedProviders(instance, INHERITABLE_NAMES)
+
+    local name = instance:GetAttribute(ATTRIBUTES.Preset)
+    local source: Types.AttributeSource? = if name ~= nil then OWN_SOURCE else nil
+
+    if name == nil then
+        local provider: Instance? = providers[ATTRIBUTES.Preset]
+        if provider ~= nil then
+            name = provider:GetAttribute(ATTRIBUTES.Preset)
+            source = inheritedSource(provider)
+        end
+    end
+
+    if typeof(name) ~= "string" or #name == 0 then
+        return {
+            Instance = instance,
+            Providers = providers,
+            PresetName = nil,
+            Preset = nil,
+            PresetSource = source,
+        }
+    end
+
+    --- `GetAttribute` is typed `unknown`; the guard above is what makes this a string.
+    local presetName = (name :: any) :: string
+    return {
+        Instance = instance,
+        Providers = providers,
+        PresetName = presetName,
+        Preset = Presets.Get(presetName),
+        PresetSource = source,
+    }
+end
 
 --[[
     The preset that applies to `instance`: the name it resolves to, the declared bundle under
@@ -196,21 +290,8 @@ local PRESET_ONLY: { string } = { ATTRIBUTES.Preset }
     the name was actually typed on.
 ]]
 function Selector.presetFor(instance: Instance): (string?, Presets.Preset?, Types.AttributeSource?)
-    local name = instance:GetAttribute(ATTRIBUTES.Preset)
-    local source: Types.AttributeSource? = if name ~= nil then ownSource() else nil
-
-    if name == nil then
-        local provider: Instance? = Selector.inheritedProviders(instance, PRESET_ONLY)[ATTRIBUTES.Preset]
-        if provider ~= nil then
-            name = provider:GetAttribute(ATTRIBUTES.Preset)
-            source = inheritedSource(provider)
-        end
-    end
-
-    if typeof(name) ~= "string" or #name == 0 then
-        return nil, nil, source
-    end
-    return name, Presets.Get(name), source
+    local resolved = Selector.resolution(instance)
+    return resolved.PresetName, resolved.Preset, resolved.PresetSource
 end
 
 --[[
@@ -228,30 +309,41 @@ end
     `element.Attributes` through it and `Selector.groupOf` answers with it, so what the
     framework reports about an element and what a query matches on cannot come apart.
 ]]
-function Selector.attributeOf(instance: Instance, name: string): (any, Types.AttributeSource?)
+function Selector.attributeIn(resolved: Resolution, name: string): (any, Types.AttributeSource?)
+    local instance = resolved.Instance
+
     local own = instance:GetAttribute(name)
     if own ~= nil then
-        return own, ownSource()
+        return own, OWN_SOURCE
     end
 
     if name ~= ATTRIBUTES.Preset then
-        local presetName, preset = Selector.presetFor(instance)
-        if presetName ~= nil and preset ~= nil then
+        local preset = resolved.Preset
+        if preset ~= nil and resolved.PresetName ~= nil then
             local value = preset[name]
             if value ~= nil then
-                return value, presetSource(presetName)
+                return value, presetSource(resolved.PresetName :: string)
             end
         end
     end
 
     if INHERITABLE[name] then
-        local provider: Instance? = Selector.inheritedProviders(instance, { name })[name]
+        local provider: Instance? = resolved.Providers[name]
         if provider ~= nil then
             return provider:GetAttribute(name), inheritedSource(provider)
         end
     end
 
     return nil, nil
+end
+
+--[[
+    The same question for a caller that has only the instance. It gathers a `Resolution` and
+    throws it away, which is right for one attribute and wrong for nine -- a caller resolving
+    a whole element should gather one itself and ask `attributeIn` repeatedly.
+]]
+function Selector.attributeOf(instance: Instance, name: string): (any, Types.AttributeSource?)
+    return Selector.attributeIn(Selector.resolution(instance), name)
 end
 
 --------------------------------------------------------------------------------
@@ -381,7 +473,14 @@ function Selector.isGate(instance: Instance): boolean
     if isIgnored(instance) then
         return true
     end
-    return not instance:IsA("GuiObject") and #instance:GetChildren() > 0
+    --[[
+        `FindFirstChildWhichIsA("Instance")` rather than `#instance:GetChildren() > 0`: every
+        child is an Instance, so the two ask the same question, but `GetChildren` builds and
+        throws away a whole array to do it. This runs once per node of every cascade sweep and
+        once per ancestor of every arriving descendant, so parenting a large panel into a
+        tagged screen was allocating an array per node per arrival.
+    ]]
+    return not instance:IsA("GuiObject") and instance:FindFirstChildWhichIsA("Instance") ~= nil
 end
 
 --[[
@@ -452,9 +551,13 @@ function Selector.cascadeUnder(root: Instance): ({ Instance }, { Instance })
             table.insert(managed, instance)
         end
 
-        for _, child in instance:GetChildren() do
-            table.insert(frontier, child)
-        end
+        --[[
+            Appended in one move rather than one insert per child. `GetChildren` has already
+            built the array; copying it in bulk skips a bounds check and a length read per
+            element, and this loop runs once per node of the screen.
+        ]]
+        local children = instance:GetChildren()
+        table.move(children, 1, #children, #frontier + 1, frontier)
     end
 
     return managed, gates
@@ -473,12 +576,17 @@ end
     written once on the ScreenGui and selects the lot. `roleOf` deliberately does NOT walk --
     a role is identity, and inheriting one would give every descendant of a panel the same name.
 ]]
-function Selector.groupOf(instance: Instance): string?
-    local group = Selector.attributeOf(instance, ATTRIBUTES.Group)
+function Selector.groupIn(resolved: Resolution): string?
+    local group = Selector.attributeIn(resolved, ATTRIBUTES.Group)
     if typeof(group) == "string" and #group > 0 then
         return group
     end
     return nil
+end
+
+--- The same answer for a caller holding only the instance. Gathers a `Resolution` and drops it.
+function Selector.groupOf(instance: Instance): string?
+    return Selector.groupIn(Selector.resolution(instance))
 end
 
 --- Renders a selector the way the whiteboard wrote it, for use in error messages.

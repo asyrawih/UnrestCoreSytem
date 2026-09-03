@@ -162,9 +162,26 @@ function Cascade.new(host: CascadeHost): CascadeEngine
     --- Everything the cascade reaches under `root`, plus the gates that keep it live.
     local function sweep(root: Instance): ()
         local cascaded, gated = Selector.cascadeUnder(root)
+
+        --[[
+            Covered directly rather than reconciled. `reconcile` exists to ask `isManaged`,
+            which walks from the instance up to the tagged root testing the tag and
+            `UnrestIgnore` at every step -- and `Selector.cascadeUnder` guarantees, in its own
+            header, that everything in this list already satisfies exactly that predicate. The
+            walk it prunes with and the walk `isManaged` performs are the same walk.
+
+            Re-asking made a sweep of an N-node screen of depth D do N x D redundant
+            `HasTag` / `GetAttribute` crossings, once at startup for every tagged root and
+            again on every tag or `UnrestIgnore` edit. The `destroyed` check `reconcile` opens
+            with is kept, because a host that shut down mid-sweep must not be handed more.
+        ]]
         for _, instance in cascaded do
-            reconcile(instance)
+            if destroyed then
+                return
+            end
+            host.Cover(instance)
         end
+
         for _, instance in gated do
             watchGate(instance)
         end

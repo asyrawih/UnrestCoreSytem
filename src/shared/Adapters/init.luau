@@ -379,7 +379,7 @@ end
     deliberately the opposite: the unsupported name is skipped and the rest of the table still
     binds, because not taking the screen down over one mistyped attribute is the whole point.
 ]]
-function Adapters.bind(
+local function connect(
     registry: Types.AdapterRegistry,
     element: Instance,
     handlers: Types.Handlers,
@@ -387,13 +387,6 @@ function Adapters.bind(
     hint: string,
     soft: boolean?
 ): ()
-    if not soft then
-        local rejection = Adapters.rejects(registry, element, handlers, hint)
-        if rejection ~= nil then
-            error(rejection, 0)
-        end
-    end
-
     local resolved = registry:Resolve(element)
 
     for key, handler in handlers :: { [string]: Types.ElementHandler } do
@@ -419,6 +412,47 @@ function Adapters.bind(
             Scope.add(scope, connection)
         end
     end
+end
+
+function Adapters.bind(
+    registry: Types.AdapterRegistry,
+    element: Instance,
+    handlers: Types.Handlers,
+    scope: Primitives.Scope,
+    hint: string,
+    soft: boolean?
+): ()
+    if not soft then
+        local rejection = Adapters.rejects(registry, element, handlers, hint)
+        if rejection ~= nil then
+            error(rejection, 0)
+        end
+    end
+
+    connect(registry, element, handlers, scope, hint, soft)
+end
+
+--[[
+    The same binding, for a caller that has ALREADY asked `Adapters.rejects` and been told nil.
+
+    `Query` is that caller, twice: it asks before attaching so it can choose which thread to
+    raise the refusal on, and `QueryHandle:Bind` asks for every element it holds before
+    committing the merge. Going back through `Adapters.bind` made each of them ask a second
+    time -- a loop over the handler table doing a `Resolve` and a `ClassName` read per key, per
+    element, for an answer it was already holding.
+
+    It still raises on a handler the element cannot support. Skipping the pre-flight only means
+    the raise happens mid-loop, which is why this is not the default door: `Adapters.bind`
+    checks first precisely so a refusal leaves nothing connected.
+]]
+function Adapters.bindChecked(
+    registry: Types.AdapterRegistry,
+    element: Instance,
+    handlers: Types.Handlers,
+    scope: Primitives.Scope,
+    hint: string
+): ()
+    connect(registry, element, handlers, scope, hint, false)
 end
 
 return Adapters

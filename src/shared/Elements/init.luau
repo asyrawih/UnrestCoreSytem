@@ -133,6 +133,14 @@ local Elements = {}
 
 local ATTRIBUTES = Constants.Attributes
 
+--[[
+    Built once at load rather than per rewire. It is a constant sentence, and it was being
+    assembled for every element carrying an `UnrestCommand` on every rewire, to be read only
+    if the bind was refused.
+]]
+local COMMAND_HINT = `Move {Constants.Attributes.Command} onto an element whose class can be activated `
+    .. `(a TextButton, ImageButton, ClickDetector or ProximityPrompt), or remove the attribute.`
+
 --- Every attribute the manager reads off the element itself, so one loop wires all the
 --- change signals and one loop reads the strongest layer of the merge.
 local WATCHED: { string } = {
@@ -159,15 +167,42 @@ table.sort(INHERITABLE)
 
 --[[
     `UnrestFormat` is a template with one hole, not a format string: designers write
-    "Status: {value}", never "%s". A function replacement is used so a `%` in the value is a
-    literal per cent sign rather than a gsub escape.
+    "Status: {value}", never "%s".
+
+    Split once, at wire time, into what goes before the hole and what goes after. Painting is
+    then two concatenations. It used to run `string.gsub` with a *function* replacement -- so a
+    per cent sign in the value stayed a per cent sign rather than becoming a gsub escape -- but
+    that allocated a closure and ran the pattern matcher on every published value, on every
+    element bound to the channel. Splitting keeps the same guarantee for free: neither half is
+    ever re-scanned, so nothing in the value can be read as a pattern.
+
+    A template with no `{value}` in it is a constant, and `suffix` being nil is how that is
+    remembered. A second `{value}` is left alone: the first hole is the hole.
 ]]
-local function applyFormat(format: string, value: any): string
+local function splitFormat(format: string): (string, string?)
+    local start, finish = string.find(format, "{value}", 1, true)
+    if start == nil or finish == nil then
+        return format, nil
+    end
+    return string.sub(format, 1, start - 1), string.sub(format, finish + 1)
+end
+
+local function applyFormat(prefix: string, suffix: string?, value: any): string
+    if suffix == nil then
+        return prefix
+    end
     local text = if value == nil then "" else tostring(value)
-    local rendered = string.gsub(format, "{value}", function()
-        return text
-    end)
-    return rendered
+    return prefix .. text .. suffix
+end
+
+--[[
+    Hoisted so `pcall` can be handed a function and its arguments instead of a closure that
+    captures them. Luau forwards varargs to `pcall` without allocating, and this runs once per
+    published value per bound element -- the one place in the framework that can be reached at
+    a frame's cadence.
+]]
+local function assign(container: any, key: string, value: any): ()
+    container[key] = value
 end
 
 local function readString(source: { [string]: any }, key: string): string?
@@ -219,23 +254,33 @@ end
     Rebuilds `element.Attributes`, `element.Sources` and `element.Preset`, and installs this
     element's watches on the chain above it into `scope`.
 
-    Not a merge of three layers any more: every key is asked of `Selector.attributeOf`, which
+    Not a merge of three layers any more: every key is asked of `Selector.attributeIn`, which
     *is* the three layers -- own, then preset, then the nearest ancestor's, most specific
     winning. `Selector.groupOf` asks the same function, so the group this fills into
     `element.Attributes` is by construction the group `Query({ Group = ... })` matches on.
+
+    The ancestor walk and the preset lookup are gathered ONCE, into a `Selector.Resolution`,
+    and every key is then answered out of it. Asking `Selector.attributeOf` per key meant a
+    fresh walk to the ScreenGui per key -- fifteen of them for the nine keys here, every time
+    any watched attribute anywhere above or on the element was edited.
 
     Which keys get asked is the union of the attributes the framework reads and whatever the
     preset supplies, so a preset carrying a name outside `WATCHED` still lands in
     `element.Attributes` and still records where it came from.
 ]]
-local function resolve(element: Types.ManagedElement, scope: Types.Scope, onAncestorChanged: () -> ()): ()
+local function resolve(
+    element: Types.ManagedElement,
+    scope: Types.Scope,
+    onAncestorChanged: () -> ()
+): Selector.Resolution
     local instance = element.Instance
     local attributes: { [string]: any } = {}
     local sources: { [string]: Types.AttributeSource } = {}
 
     watchAncestors(instance, scope, onAncestorChanged)
 
-    local presetName, preset, presetFrom = Selector.presetFor(instance)
+    local resolved = Selector.resolution(instance)
+    local presetName, preset, presetFrom = resolved.PresetName, resolved.Preset, resolved.PresetSource
     element.Preset = if preset ~= nil then presetName else nil
 
     if presetName ~= nil and preset == nil then
@@ -258,7 +303,7 @@ local function resolve(element: Types.ManagedElement, scope: Types.Scope, onAnce
     if preset ~= nil then
         for name in preset do
             -- A preset naming a preset would be a second, invisible level of indirection, and
-            -- `attributeOf` refuses to read one; asking again here would only warn twice.
+            -- `attributeIn` refuses to read one; asking again here would only warn twice.
             if name ~= ATTRIBUTES.Preset and table.find(names, name) == nil then
                 table.insert(names, name)
             end
@@ -266,7 +311,7 @@ local function resolve(element: Types.ManagedElement, scope: Types.Scope, onAnce
     end
 
     for _, name in names do
-        local value, source = Selector.attributeOf(instance, name)
+        local value, source = Selector.attributeIn(resolved, name)
         if value ~= nil and source ~= nil then
             attributes[name] = value
             sources[name] = source
@@ -275,6 +320,13 @@ local function resolve(element: Types.ManagedElement, scope: Types.Scope, onAnce
 
     element.Attributes = attributes
     element.Sources = sources
+
+    --[[
+        Handed back so the caller can finish the element out of the same snapshot. `element.Group`
+        is the next thing asked, and asking `Selector.groupOf` for it would walk the tree again
+        to re-derive what this resolution is already holding.
+    ]]
+    return resolved
 end
 
 --[[
@@ -320,6 +372,13 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     local wiring: { [Instance]: Types.Scope } = {}
     --- Torn down and rebuilt alongside it: this element's watches on its ancestor chain.
     local ancestry: { [Instance]: Types.Scope } = {}
+    --[[
+        One `() -> ()` per element that re-runs its wiring, kept because `resolve` needs to hand
+        it to every ancestor watch it installs. Built once and reused rather than per rewire: a
+        rewire happens on adoption and again on every edit to any watched attribute on the
+        element or on any of its ancestors, and the closure is identical every time.
+    ]]
+    local rewires: { [Instance]: () -> () } = {}
     --- Adoption order, so `All()` is stable rather than hash-ordered.
     local order: { Instance } = {}
     --[[
@@ -363,9 +422,6 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         local cooldown = if typeof(rawCooldown) == "number" then math.max(rawCooldown, 0) else 0
         local last = -math.huge
 
-        local hint = `Move {ATTRIBUTES.Command} onto an element whose class can be activated `
-            .. `(a TextButton, ImageButton, ClickDetector or ProximityPrompt), or remove the attribute.`
-
         Adapters.bind(adapters, instance, {
             Active = function()
                 if cooldown > 0 then
@@ -377,7 +433,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
                 end
                 bridge:Dispatch(command, payload)
             end,
-        }, scope, hint, true)
+        }, scope, COMMAND_HINT, true)
     end
 
     --[[
@@ -416,22 +472,30 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
 
         local target = property
         local format = readString(element.Attributes, ATTRIBUTES.Format)
+        local prefix: string?, suffix: string? = nil, nil
+        if format ~= nil then
+            prefix, suffix = splitFormat(format)
+        end
         local writable = instance :: any
 
         Scope.add(
             scope,
             bridge:Subscribe(channel, function(value: any)
                 local painted: any = value
-                if format ~= nil then
-                    painted = applyFormat(format, value)
+                if prefix ~= nil then
+                    painted = applyFormat(prefix :: string, suffix, value)
                 elseif value == nil then
                     -- No Roblox property accepts nil. Without a format there is nothing to write.
                     return
                 end
 
-                local ok, err = pcall(function()
-                    writable[target] = painted
-                end)
+                --[[
+                    `assign` is cast because `pcall` is typed from the callee's returns, and a
+                    function declared `-> ()` makes the checker insist `pcall` yields only the
+                    boolean. It always yields the error as well when the call fails, which is
+                    the value being read here.
+                ]]
+                local ok, err = pcall(assign :: any, writable, target, painted)
                 if not ok then
                     warn(
                         `[Unrest.Elements] {instance:GetFullName()} could not write {typeof(painted)} into `
@@ -462,14 +526,23 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         Scope.clean(wiringScope)
         Scope.clean(ancestryScope)
 
-        resolve(element, ancestryScope, function()
-            rewire(element)
-        end)
+        local onAncestorChanged = rewires[instance]
+        if onAncestorChanged == nil then
+            onAncestorChanged = function()
+                rewire(element)
+            end
+            rewires[instance] = onAncestorChanged
+        end
+
+        local resolved = resolve(element, ancestryScope, onAncestorChanged :: () -> ())
 
         element.Role = Selector.roleOf(instance)
-        -- The same call `Query` matches with, and the same call adoption made -- so
-        -- `element.Group` and `Query({ Group = ... })` are one answer, not two.
-        element.Group = Selector.groupOf(instance)
+        --[[
+            Read out of the resolution `resolve` just built, not re-derived. It is the same
+            precedence `Query` matches with -- `Selector.groupIn` is what `Selector.groupOf`
+            calls -- so `element.Group` and `Query({ Group = ... })` remain one answer.
+        ]]
+        element.Group = Selector.groupIn(resolved)
 
         wireCommand(element, wiringScope)
         wireChannel(element, wiringScope)
@@ -624,6 +697,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         managed[instance] = nil
         wiring[instance] = nil
         ancestry[instance] = nil
+        rewires[instance] = nil
         byTag[instance] = nil
         local adoptionScope = adoption[instance]
         adoption[instance] = nil

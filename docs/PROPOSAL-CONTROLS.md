@@ -1,6 +1,12 @@
 # Proposal — Controls (v2)
 
-**Status: masih proposal. Belum ada yang diimplementasikan. Jangan dibangun sebelum diperintahkan.**
+**Status: masih proposal.** Yang dijelaskan di sini — control yang digerakkan atribut,
+`UnrestValue`, katalog — belum ada.
+
+Yang **sudah** ada adalah langkah pertama yang jauh lebih kecil: `Unrest.Widgets`
+([API Widgets](API-WIDGETS.md)). Itu API level-kode, bukan atribut: kamu menyebut peran yang
+dibutuhkan dan menerima satu tabel per `UnrestGroup` beserta cleanup scope-nya. Dokumen ini
+tetap proposal karena lapisan atributnya belum diambil keputusannya.
 
 Versi 1 sudah ditelaah dua kali, satu dari sisi rancangan dan satu dari sisi ongkos. Keduanya
 menemukan hal yang mematahkan asumsi, jadi dokumen ini bukan penyuntingan kecil. Bagian 0

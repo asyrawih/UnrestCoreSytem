@@ -36,8 +36,11 @@ selene src && stylua --check src
   integer, not an object: hold it in a plain field, pass it around freely, and hand it to
   `Scope.add` to link it as a child of a longer-lived scope.
 - **Raising must not leave half a set behind.** `Adapters.bind` checks the whole handler
-  table before it connects anything, so a raise means nothing was wired; `Query` therefore
-  binds an element *before* recording it, and `QueryHandle:Bind` proposes the merge against a
+  table before it connects anything, so a raise means nothing was wired. `Adapters.bindChecked`
+  skips that pre-flight and is ONLY for a caller that has just run `Adapters.rejects` itself and
+  been told nil — `Query` does, twice, because it needs the rejection string to choose which
+  thread to raise on. Reaching for it anywhere else reintroduces the half-wired element.
+  Consequently `Query` binds an element *before* recording it, and `QueryHandle:Bind` proposes the merge against a
   copy and asks every element it holds before committing. Nothing is ever counted by
   `:Count()` that is not bound. The one thing `Bind` cannot check is an element tagged later:
   that one is refused on arrival and stays out of the set, and because the refusal reaches no
@@ -87,14 +90,26 @@ per-element intent — inheriting a command would silently arm every descendant 
 The ancestor walk stops at the first `LayerCollector` (inclusive) and never reads a service
 or the DataModel.
 
-The precedence itself is one function: **`Selector.attributeOf(instance, name)`** returns the
+The precedence itself is one function: **`Selector.attributeIn(resolution, name)`** returns the
 value and an `AttributeSource`, applying own > preset > nearest ancestor (that last layer only
-for `Constants.Inheritable`; `UnrestPreset` skips the preset layer). `Elements.resolve` asks it
-for every key of `element.Attributes`, and `Selector.groupOf` asks it for `UnrestGroup` — so
-what the framework reports about an element and what a query matches on cannot come apart.
+for `Constants.Inheritable`; `UnrestPreset` skips the preset layer). Everything else is a
+wrapper on it, so what the framework reports about an element and what a query matches on
+cannot come apart.
+
+A **`Selector.Resolution`** is the inputs that answer is derived from, gathered once:
+`Selector.resolution(instance)` walks the ancestor chain a single time, records the nearest
+provider of every inheritable name, and resolves the preset. Hold one only for the length of a
+resolution — it is a snapshot of a tree that is about to change.
+
+  * `Elements.resolve` gathers one and asks `attributeIn` for each of the nine keys, then hands
+    it back so `Selector.groupIn` can fill `element.Group` out of the same snapshot.
+  * `Selector.attributeOf(instance, name)` / `Selector.groupOf(instance)` / `Selector.presetFor`
+    are the convenience doors: they gather a `Resolution`, ask once, and drop it. Right for one
+    attribute, **wrong for nine** — a caller resolving a whole element must gather its own.
+
 It builds on two helpers in the same module: `Selector.inheritedProviders(instance, names)`
-(nearest ancestor per name) and `Selector.presetFor(instance)` (the preset name, its bundle and
-where the name was typed — own beating inherited).
+(nearest ancestor per name) and the preset lookup folded into `Selector.resolution` (the preset
+name, its bundle and where the name was typed — own beating inherited).
 
 `Descriptor.Group` matching therefore sees inherited groups, including a group a preset on a
 ScreenGui supplies: `UnrestGroup` written once up there is enough for

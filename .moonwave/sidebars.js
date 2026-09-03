@@ -56,6 +56,7 @@ module.exports = {
                 { type: "doc", id: "API-BRIDGE", label: "Bridge" },
                 { type: "doc", id: "API-CORE", label: "Core & System" },
                 { type: "doc", id: "API-ELEMENTS", label: "Elements & Query" },
+                { type: "doc", id: "API-WIDGETS", label: "Widgets" },
                 { type: "doc", id: "API-ADAPTERS", label: "Adapters" },
                 { type: "doc", id: "API-CONTRACTS", label: "Contracts" },
                 { type: "doc", id: "API-PRESETS", label: "Presets" },
@@ -88,11 +89,13 @@ module.exports = {
             link: {
                 type: "generated-index",
                 title: "Operasional",
-                description: "Keamanan, dan apa yang harus dilakukan saat ada yang salah.",
+                description:
+                    "Keamanan, cara mengukur biayanya, dan apa yang harus dilakukan saat ada yang salah.",
                 slug: "/category/operations",
             },
             items: [
                 { type: "doc", id: "REMOTE-SECURITY", label: "Keamanan Remote" },
+                { type: "doc", id: "BENCHMARKING", label: "Benchmark & Heap" },
                 { type: "doc", id: "TROUBLESHOOTING", label: "Pemecahan Masalah" },
             ],
         },

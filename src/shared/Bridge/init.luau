@@ -33,6 +33,7 @@
 
 local Scope = require(script.Parent.Util.Scope)
 local Signal = require(script.Parent.Util.Signal)
+local Slots = require(script.Parent.Util.Slots)
 local Types = require(script.Parent.Types)
 
 type Channel = {
@@ -40,6 +41,46 @@ type Channel = {
     HasValue: boolean,
     Signal: Types.Signal<any>,
 }
+
+--[[
+    Variadic return so `xpcall` is typed as `(boolean, ...any)` rather than `(boolean)`. A
+    `CommandHandler` is declared as returning nothing, which would otherwise hide the message
+    handler's return from the checker; the value is there at runtime either way.
+]]
+type Dispatchable = (any) -> ...any
+
+--- A live handler, or the hole a mid-dispatch drop left. See `Util/Slots` for the rule.
+type CommandSlot = Slots.Slot<Types.CommandHandler>
+
+--[[
+    Every handler registered against one command name, plus the bookkeeping that lets
+    `Dispatch` walk the list without copying it. `Depth` counts the dispatches of this command
+    currently on the stack -- a handler is allowed to dispatch the command it is handling, so a
+    boolean would be cleared by the inner call and let it compact the list the outer loop is
+    still indexing into. `Vacated` records that somebody dropped a handler while a dispatch was
+    running, so the list is squeezed once the outermost one unwinds.
+
+    The dense-array rule itself lives in `Util/Slots`, which `Util/Signal` follows too. Only
+    the counter is per-caller: a signal counts fires of itself, this counts dispatches of one
+    command name.
+]]
+type Command = {
+    List: { CommandSlot },
+    Depth: number,
+    Vacated: boolean,
+}
+
+--[[
+    `xpcall`'s message handler, hoisted to module level so a dispatch does not mint one of
+    these per handler per call. Where a function is *written* does not move it on the call
+    stack, so level 2 still means here what it meant inside `Dispatch`: the frame that raised,
+    which is the handler, and never the Bridge. `return debug.traceback(...)` is a tail call,
+    so on a VM that elides this frame the trace simply starts one line lower -- at the handler
+    itself rather than at the `error` it called. The same handler is named either way.
+]]
+local function traceback(err: any): string
+    return debug.traceback(tostring(err), 2)
+end
 
 local Bridge = {}
 
@@ -49,7 +90,7 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
     end
 
     local channels: { [string]: Channel } = {}
-    local handlers: { [string]: { Types.CommandHandler } } = {}
+    local handlers: { [string]: Command } = {}
     local lifetime = Scope.scope()
     local destroyed = false
 
@@ -142,29 +183,53 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
         local name = assertName(command, "Dispatch", "command")
 
         local registered = handlers[name]
-        if registered == nil or #registered == 0 then
+        if registered == nil then
             return
         end
 
-        -- Snapshot: a handler is allowed to add or drop another handler mid-dispatch.
-        for _, handler in table.clone(registered) do
-            --[[
-                Handler isolation. A button wired in Studio can reach any handler, and one
-                system throwing must not swallow the click for every other listener -- so
-                each runs under `xpcall` and the traceback is reported where it is useful.
+        --[[
+            No snapshot. A handler is still allowed to add or drop another handler
+            mid-dispatch, and both cases stay correct without one: `last` is read before the
+            first handler runs, so a handler added now is not reached until the next dispatch
+            -- which is what copying the list did too -- and a handler dropped now has its slot
+            vacated rather than removed, so every index this loop holds stays put. The list is
+            compacted below, once the outermost dispatch of this command unwinds.
 
-                The traceback lands in an upvalue rather than in `xpcall`'s second return,
-                because a `CommandHandler` returns nothing and so there is no second return
-                to put it in.
-            ]]
-            local failure: string? = nil
-            local ok = xpcall(handler, function(err: any): ()
-                failure = debug.traceback(tostring(err), 2)
-            end, payload)
+            The one thing the copy did that this does not: a handler dropped mid-dispatch and
+            not yet reached used to run anyway, off the copy. It is skipped now, which is what
+            `Handle`'s caller asked for when it disconnected.
+        ]]
+        local list = registered.List
+        local last = #list
+        if last == 0 then
+            return
+        end
 
-            if not ok then
-                warn(`[Unrest.Bridge] handler for "{name}" errored:\n{tostring(failure)}`)
+        registered.Depth += 1
+        for index = 1, last do
+            local handler = list[index]
+            if type(handler) == "function" then
+                --[[
+                    Handler isolation. A button wired in Studio can reach any handler, and one
+                    system throwing must not swallow the click for every other listener -- so
+                    each runs under `xpcall` and the traceback is reported where it is useful.
+
+                    On failure `xpcall` returns false plus whatever the message handler
+                    returned -- regardless of what the called function would have returned had
+                    it succeeded -- so the traceback arrives as the second return, and no
+                    per-handler closure is needed to carry it out in an upvalue.
+                ]]
+                local ok, err = xpcall(handler :: Dispatchable, traceback, payload)
+                if not ok then
+                    warn(`[Unrest.Bridge] handler for "{name}" errored:\n{tostring(err)}`)
+                end
             end
+        end
+        registered.Depth -= 1
+
+        if registered.Depth == 0 and registered.Vacated then
+            registered.Vacated = false
+            Slots.compact(list)
         end
     end
 
@@ -177,10 +242,14 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
 
         local registered = handlers[name]
         if registered == nil then
-            registered = {}
+            registered = {
+                List = {},
+                Depth = 0,
+                Vacated = false,
+            }
             handlers[name] = registered
         end
-        table.insert(registered, handler)
+        table.insert(registered.List, handler)
 
         local connection = { Connected = true }
         local function disconnect(): ()
@@ -188,13 +257,21 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
                 return
             end
             connection.Connected = false
-            local list = handlers[name]
-            if list == nil then
+            local entry = handlers[name]
+            if entry == nil then
                 return
             end
-            local index = table.find(list, handler)
-            if index ~= nil then
-                table.remove(list, index)
+            local index = table.find(entry.List, handler)
+            if index == nil then
+                return
+            end
+            if entry.Depth > 0 then
+                -- A dispatch is walking this list; vacate the slot and let it compact on the
+                -- way out, so the indices that dispatch is holding do not shift underneath it.
+                entry.List[index] = false
+                entry.Vacated = true
+            else
+                table.remove(entry.List, index)
             end
         end
         connection.Disconnect = disconnect

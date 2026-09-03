@@ -66,6 +66,28 @@ ditulis dari sebuah channel. Daftarkan adapter-mu sendiri untuk kelas kustom. Li
 UI Studio yang diadopsi. **Hanya berguna di client**; di server objeknya ada, tapi tidak
 mengadopsi apa pun. Lihat [API Elements](API-ELEMENTS.md).
 
+### `Widgets: WidgetLibrary`
+
+Kontrol berbagian-banyak: slider, toggle, apa pun yang bagian-bagiannya baru berarti kalau
+digabung. Ini lapisan yang dicari **sebelum** menulis query sendiri. **Client saja** —
+memanggilnya di server raise. Lihat [API Widgets](API-WIDGETS.md).
+
+### `Scope: ScopeLibrary`
+
+Pustaka cleanup framework ([Scythe](https://github.com/synttx/scythe)), di-export ulang di
+sini. Sebuah scope itu **angka**, bukan objek: simpan di field biasa, oper ke mana saja.
+
+```luau
+local scope = unrest.Scope.scope()
+unrest.Scope.add(scope, unrest.Bridge:Subscribe("Koin", perbarui))
+unrest.Scope.destroy(scope)   -- semuanya lepas sekaligus
+```
+
+Ambil dari sini, **jangan** `require(ReplicatedStorage.Packages.Scythe)` sendiri. Scythe
+menyimpan datanya di upvalue modul, jadi dua salinan modul berarti dua semesta handle yang
+terpisah — handle dari yang satu, di mata yang lain, adalah slot milik orang lain. Lewat
+`unrest.Scope` salinannya dijamin cuma satu.
+
 ---
 
 ## Metode siklus hidup
@@ -76,11 +98,10 @@ Menyalakan framework. Mengembalikan singleton itu sendiri, jadi bisa dirantai.
 
 Yang dilakukannya, berurutan:
 
-1. **Jaringan dinyalakan lebih dulu.** Setengah-client dibangun. Ini terjadi sebelum UI
-   diadopsi, karena elemen yang membawa `UnrestCommand` bisa diklik sedetik setelah diadopsi,
-   dan dispatch tanpa gerbang di belakangnya adalah klik yang diam-diam hilang.
-2. **UI diadopsi** — hanya di client. `Elements:Start()` dipanggil.
-3. **Sistem dijalankan.** `Core:Start(unrest)` menjalankan `Init(unrest)` untuk setiap sistem
+1. **UI diadopsi** — hanya di client. `Elements:Start()` dipanggil. Di server langkah ini
+   dilewati: ScreenGui yang ditandai memang ada di sana, tapi tidak ada yang pernah
+   mengkliknya.
+2. **Sistem dijalankan.** `Core:Start(unrest)` menjalankan `Init(unrest)` untuk setiap sistem
    sesuai urutan dependensi, lalu `Start()` untuk setiap sistem dalam urutan yang sama.
 
 ```luau
@@ -100,8 +121,8 @@ melempar error dan membatalkan pendaftarannya.
 Mematikan sistem-sistem. `Core:Stop()` memanggil `Destroy()` pada setiap sistem dalam urutan
 **terbalik**.
 
-Yang **tidak** dilakukannya: dia tidak merobohkan Bridge, tidak melepas UI yang diadopsi, dan
-tidak menutup gerbang. Ini pematian sistem, bukan pematian framework.
+Yang **tidak** dilakukannya: dia tidak merobohkan Bridge dan tidak melepas UI yang diadopsi.
+Ini pematian sistem, bukan pematian framework.
 
 ```luau
 unrest:Stop()
