@@ -2,34 +2,52 @@
 --[[
     Game -- StarterPlayer.StarterPlayerScripts.Game
 
-    The client bootstrap. It builds no UI: the framework adopts what a designer made in Studio,
-    and tagging an element `Unrest` is the whole opt-in. This file only says what a tagged
-    element means.
-
-    The query below binds live. Nothing tagged yet is not an error and not a special case --
-    the handle stays empty and picks up a `TestButton` the moment one is tagged, which is what
-    makes building the UI in Studio while the game runs work at all.
-
-    There is nothing to declare before starting. The Bridge is a local bus, so the channels
-    and commands this file uses are agreed between this script and the rest of the client, and
-    nowhere else. The only thing that ever needs saying up front is a preset:
-
-        local Presets = require(ReplicatedStorage.Unrest.Presets)
-        Presets.Register("PrimaryAction", { UnrestCommand = "Music.Play", UnrestPayload = "Lobby" })
-
-    Register above `:Start()`. An element adopted at Start resolves its `UnrestPreset` there
-    and then, and a bundle registered afterwards is one it has already warned about.
+    Client tidak membuat UI. Layarnya dibuat tangan di Studio, dan tag `Unrest` adalah seluruh
+    cara ikut sertanya. Berkas ini cuma mengatakan dua hal: apa arti nilai yang datang dari
+    server, dan apa arti sebuah tombol ditekan.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Unrest = require(ReplicatedStorage.Unrest)
 
+local Kabar = ReplicatedStorage:WaitForChild("Kabar") :: RemoteEvent
+local Niat = ReplicatedStorage:WaitForChild("Niat") :: RemoteEvent
+
 local unrest = Unrest:Start()
 
---- `Role` reads the element's `UnrestRole` attribute, falling back to its `Name`.
-unrest:Query({ Tag = unrest.Tag, Role = "TestButton" }, {
-    Active = function()
-        print("Test")
+--[[
+    Turun. Tiga baris ini mengurus setiap label bertag di seluruh game: server menyebut nama
+    channel, dan setiap elemen yang mendengarkan nama itu ikut berubah. Menambah label baru
+    nanti tidak menyentuh berkas ini sama sekali, cukup dua atribut di Studio.
+
+    Nilainya tertahan, jadi kabar yang tiba sebelum layarnya direplikasi tidak hilang: label
+    yang diadopsi belakangan langsung melukis nilai terakhir.
+]]
+Kabar.OnClientEvent:Connect(function(channel: any, nilai: any)
+    if typeof(channel) ~= "string" then
+        return
+    end
+    unrest.Bridge:Publish(channel, nilai)
+end)
+
+--[[
+    Naik. Satu query mengurus semua tombol beli, berapa pun jumlahnya. Yang membedakan mereka
+    adalah `UnrestPayload` yang diketik desainer, dan `elemen` di sini adalah instance yang
+    benar-benar ditekan.
+
+    Query ini mengikat hidup: tombol yang baru ditandai saat game berjalan langsung tertangkap.
+]]
+unrest:Query({ Tag = unrest.Tag, Role = "Beli" }, {
+    Active = function(elemen: Instance)
+        Niat:FireServer(elemen:GetAttribute("UnrestPayload"))
+    end,
+
+    Hover = function(elemen: Instance)
+        (elemen :: GuiObject).BackgroundTransparency = 0.2
+    end,
+
+    Unhover = function(elemen: Instance)
+        (elemen :: GuiObject).BackgroundTransparency = 0
     end,
 })
