@@ -46,6 +46,44 @@ return ByteNetMax.defineNamespace("Game", function()
             Pesan = ByteNetMax.definePacket({
                 value = ByteNetMax.struct({ Teks = ByteNetMax.string }),
             }),
+
+            --[[
+                The server directory, server -> client. One message carries the whole list
+                because that is what the panel draws: a partial list is not a smaller list,
+                it is a wrong one.
+
+                `Users` is `float64`, not `uint32`. Roblox user ids passed 2^32 in 2024, so a
+                `uint32` would silently wrap the newest accounts into somebody else's id --
+                the kind of bug that only shows up for the players who joined most recently.
+                `float64` holds every integer up to 2^53 exactly.
+
+                `Players` and `Capacity` are `uint8`, which caps a server at 255 seats. That
+                is above every real `Players.MaxPlayers`, and the sender clamps rather than
+                trusting it.
+            ]]
+            ServerList = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({
+                    Servers = ByteNetMax.array(ByteNetMax.struct({
+                        JobId = ByteNetMax.string,
+                        Players = ByteNetMax.uint8,
+                        Capacity = ByteNetMax.uint8,
+                        Users = ByteNetMax.array(ByteNetMax.float64),
+                    })),
+                }),
+            }),
+
+            --[[
+                "Send me the list", client -> server, carrying nothing at all: the request has
+                no content beyond having been made, and the sender is the second argument
+                Roblox fills in rather than anything the message could claim.
+
+                It exists so the client can ask once when it is ready to listen, rather than
+                the server guessing when that is. The answer comes out of a cache the poll
+                loop fills, so a player mashing Refresh cannot reach MemoryStore.
+            ]]
+            ServerListRequest = ByteNetMax.definePacket({
+                value = ByteNetMax.nothing,
+            }),
         },
     }
 end)

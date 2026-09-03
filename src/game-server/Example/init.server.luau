@@ -22,8 +22,8 @@
     before anything can answer it.
 
     There is no `Remotes.luau` any more. What used to be two `RemoteEvent`s created here is now
-    packets in `ReplicatedStorage.GameNet`, required as-is by both realms. The framework still
-    knows nothing about any of it.
+    three packets in `ReplicatedStorage.GameNet`, required as-is by both realms. The framework
+    still knows nothing about any of it.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -31,19 +31,23 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local GameNet = require(ReplicatedStorage.GameNet)
 local Unrest = require(ReplicatedStorage.Unrest)
 
-Unrest:Register(require(script.Systems.ServerRegistry))
+Unrest:Register(require(script.Systems.Dompet))
+Unrest:Register(require(script.Systems.Toko))
 
 local unrest = Unrest:Start()
 
 --[[
     The last trusted boundary. `player` is the SECOND argument ByteNet hands over, passed
     straight through from `OnServerEvent`, so Roblox is what fills it in. Identity never comes
-    from the message: the request carries no payload at all, and could not name a player even
-    if a client wanted it to.
+    from the message: the `Beli` packet has no player field, and must not have one.
+
+    The shape of `data` is still checked here because no gateway checks it first. The packet
+    schema guarantees a string `Barang` if the buffer decoded at all, but decoded is not the
+    same as sensible, and whether that item exists is Toko's decision.
 ]]
-GameNet.packets.ServerListRequest.listen(function(_, player: Player?): ()
-    if player == nil then
+GameNet.packets.Beli.listen(function(data, player: Player?): ()
+    if player == nil or typeof(data) ~= "table" or typeof(data.Barang) ~= "string" then
         return
     end
-    unrest.Bridge:Dispatch("ServerRegistry.Request", { Player = player })
+    unrest.Bridge:Dispatch("Toko.Beli", { Player = player, Item = data.Barang })
 end)
