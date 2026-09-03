@@ -5,6 +5,8 @@ realm = "shared"
 registry = "https://github.com/UpliftGames/wally-index"
 
 [dependencies]
+# Dipakai kode game untuk remote-nya sendiri. Framework tidak menyentuhnya.
+ByteNet = "elitriare/bytenet-max@1.0.0"
 # The framework requires nothing from here. Unrest adopts UI that already exists in the
 # place file, so it needs no transport, no serializer, and no runtime library.
 Scythe = "synttx/scythe@1.2.0"

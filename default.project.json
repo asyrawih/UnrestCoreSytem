@@ -10,10 +10,12 @@
         "$path": "src/shared"
       },
 
+      "GameNet": {
+        "$path": "src/game-net"
+      },
+
       "Packages": {
-        "$path": {
-          "optional": "Packages"
-        }
+        "$path": "Packages"
       }
     },
 

@@ -5,7 +5,12 @@ registry = "test"
 [[package]]
 name = "asyrawih/unrest-core-system"
 version = "0.1.0"
-dependencies = [["Scythe", "synttx/scythe@1.2.2"]]
+dependencies = [["ByteNet", "elitriare/bytenet-max@1.0.0"], ["Scythe", "synttx/scythe@1.2.2"]]
+
+[[package]]
+name = "elitriare/bytenet-max"
+version = "1.0.0"
+dependencies = []
 
 [[package]]
 name = "synttx/scythe"

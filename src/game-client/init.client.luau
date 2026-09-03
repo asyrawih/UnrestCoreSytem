@@ -2,52 +2,74 @@
 --[[
     Game -- StarterPlayer.StarterPlayerScripts.Game
 
-    Client tidak membuat UI. Layarnya dibuat tangan di Studio, dan tag `Unrest` adalah seluruh
-    cara ikut sertanya. Berkas ini cuma mengatakan dua hal: apa arti nilai yang datang dari
-    server, dan apa arti sebuah tombol ditekan.
+    The client bootstrap. It does two things: start the framework, then load the features.
+
+    There is deliberately no logic here beyond wiring. Each feature lives in its own file and
+    takes `unrest` as its first argument, so adding one means adding a file and a line rather
+    than growing this one.
+
+    Load order does not matter. Every feature binds through `Unrest:Query`, and those bind
+    live: an element tagged later, even while the game is running, is still picked up.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Unrest = require(ReplicatedStorage.Unrest)
 
-local Kabar = ReplicatedStorage:WaitForChild("Kabar") :: RemoteEvent
-local Niat = ReplicatedStorage:WaitForChild("Niat") :: RemoteEvent
-
 local unrest = Unrest:Start()
 
---[[
-    Turun. Tiga baris ini mengurus setiap label bertag di seluruh game: server menyebut nama
-    channel, dan setiap elemen yang mendengarkan nama itu ikut berubah. Menambah label baru
-    nanti tidak menyentuh berkas ini sama sekali, cukup dua atribut di Studio.
-
-    Nilainya tertahan, jadi kabar yang tiba sebelum layarnya direplikasi tidak hilang: label
-    yang diadopsi belakangan langsung melukis nilai terakhir.
-]]
-Kabar.OnClientEvent:Connect(function(channel: any, nilai: any)
-    if typeof(channel) ~= "string" then
-        return
-    end
-    unrest.Bridge:Publish(channel, nilai)
-end)
+require(script.Shop)(unrest)
 
 --[[
-    Naik. Satu query mengurus semua tombol beli, berapa pun jumlahnya. Yang membedakan mereka
-    adalah `UnrestPayload` yang diketik desainer, dan `elemen` di sini adalah instance yang
-    benar-benar ditekan.
+    What each slider's value means is decided here, per `UnrestGroup`, not inside the slider.
 
-    Query ini mengikat hidup: tombol yang baru ditandai saat game berjalan langsung tertangkap.
+    `OnChange` fires on every move, so it belongs to anything the player should feel while
+    dragging. `OnCommit` fires once on release, and belongs to anything that costs something.
+
+    A slider with no entry here still paints itself and still publishes `Volume.<group>`.
 ]]
-unrest:Query({ Tag = unrest.Tag, Role = "Beli" }, {
-    Active = function(elemen: Instance)
-        Niat:FireServer(elemen:GetAttribute("UnrestPayload"))
-    end,
+require(script.Slider)(unrest, {
+    Musik = {
+        OnChange = function(value: number)
+            print(`musik ke {value}`)
+        end,
+    },
 
-    Hover = function(elemen: Instance)
-        (elemen :: GuiObject).BackgroundTransparency = 0.2
-    end,
+    Raise = {
+        OnChange = function(value: number)
+            print(`musik ke {value}`)
+        end,
+    },
 
-    Unhover = function(elemen: Instance)
-        (elemen :: GuiObject).BackgroundTransparency = 0
-    end,
+    Efek = {
+        OnCommit = function(value: number)
+            print(`efek disetel ke {value}`)
+        end,
+    },
+
+    Bloom = {
+        OnCommit = function(value: number)
+            print(`efek disetel ke {value}`)
+        end,
+    },
+})
+
+--[[
+    Switches use the same shape as sliders: actions keyed by `UnrestGroup`. There is no
+    `OnCommit` here because a press is already the settled value, and `Initial` exists because
+    a switch that assumed off would fight whatever the game already knows.
+]]
+require(script.Toggle)(unrest, {
+    Fullscreen = {
+        Initial = true,
+        OnChange = function(value: boolean)
+            print(`fullscreen {if value then "on" else "off"}`)
+        end,
+    },
+
+    Notifikasi = {
+        OnChange = function(value: boolean)
+            print(`notifikasi {if value then "on" else "off"}`)
+        end,
+    },
 })
