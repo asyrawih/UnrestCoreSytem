@@ -27,7 +27,7 @@
 
 [package]
 name = "asyrawih/unrest-core-system"
-version = "0.2.0"
+version = "0.2.1"
 description = "A UI framework for Roblox that builds no UI: it adopts what you already built in Studio, opted in with one CollectionService tag."
 license = "MIT"
 authors = ["asyrawih"]
