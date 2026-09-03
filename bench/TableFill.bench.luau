@@ -18,8 +18,10 @@
     `Profiler.End`, and that is what the other bench files in this folder use. This file
     uses the Scriptbench spellings deliberately, so that it proves BOTH halves work.
 
-    Build with `bench.project.json` and it lands at `ReplicatedStorage.Bench.TableFill.bench`.
-    See `docs/BENCHMARKING.md`.
+    Build with `bench.project.json` -- NOT `default.project.json`, which does not mount
+    `bench/` at all -- and it lands at `ReplicatedStorage.Bench.TableFill.bench`:
+
+        rojo build bench.project.json --output bench.rbxl
 ]]
 
 --- Not influenced by the benchmark; it must stay constant or the two rows stop comparing.

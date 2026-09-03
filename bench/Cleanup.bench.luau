@@ -8,7 +8,13 @@
     This is a `.bench` module, so its Instance name ends in `.bench` and the Scriptbench
     plugin (or boatbomber's Benchmarker, which shares the format) offers it in its file
     list. Build the place with `bench.project.json` and it lands at
-    `ReplicatedStorage.Bench.Cleanup.bench`. See `docs/BENCHMARKING.md`.
+    `ReplicatedStorage.Bench.Cleanup.bench`:
+
+        rojo build bench.project.json --output bench.rbxl
+
+    then open it in Studio and pick this file in the Scriptbench plugin. Run
+    `TableFill.bench` first -- it has a known answer, so a number out of it proves the
+    plugin works before anything here is believed.
 
     WHAT IS BEING COMPARED. Every pair below does identical work under the two
     implementations -- same number of disposables, same order, same teardown call -- so the

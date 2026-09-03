@@ -35,7 +35,6 @@ Baca berurutan. Empat halaman, dan setelah itu kamu sudah bisa kerja.
 | Kelas ini punya handler apa saja | [Kosakata Handler](UI-HANDLERS.md) dan [Cakupan Adapter](UI-ADAPTERS.md) |
 | Bikin slider / toggle tanpa nulis query sendiri | [Widgets](API-WIDGETS.md) |
 | Ada pesan galat merah di Output | [Pemecahan Masalah](TROUBLESHOOTING.md) |
-| Membuktikan biayanya, bukan menebaknya | [Benchmark & Heap](BENCHMARKING.md) |
 
 ---
 

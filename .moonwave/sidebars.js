@@ -87,12 +87,10 @@ module.exports = {
             link: {
                 type: "generated-index",
                 title: "Operasional",
-                description:
-                    "Cara mengukur biayanya, dan apa yang harus dilakukan saat ada yang salah.",
+                description: "Apa yang harus dilakukan saat ada yang salah.",
                 slug: "/category/operations",
             },
             items: [
-                { type: "doc", id: "BENCHMARKING", label: "Benchmark & Heap" },
                 { type: "doc", id: "TROUBLESHOOTING", label: "Pemecahan Masalah" },
             ],
         },
