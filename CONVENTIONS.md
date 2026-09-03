@@ -1,4 +1,4 @@
-# UnrestCoreSystem — project memory
+# UnrestCoreSystem — engineering conventions
 
 Roblox Luau framework. It **builds no UI**: it adopts UI built by hand in Studio, opted in
 with the CollectionService tag `Unrest`.

@@ -20,7 +20,7 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      # ---- the three checks CLAUDE.md requires, in the order it names them ----
+      # ---- the three checks CONVENTIONS.md requires, in the order it names them ----
 
       - name: Sourcemap
         run: rojo sourcemap default.project.json --output sourcemap.json
