@@ -13,7 +13,7 @@
       * it becomes visible to `Unrest:Query`.
 
     Untagging (or destroying, or `:Release`ing) undoes all of that. Every connection an
-    element owns hangs off one maid, so release is one line and cannot half-happen.
+    element owns hangs off one cleanup scope, so release is one line and cannot half-happen.
 
     ---------------------------------------------------------------------------
     The tag cascades
@@ -48,7 +48,7 @@
 
     The connection budget, in full: whatever the ledger spends (one `DescendantAdded` per
     tagged root, one `UnrestIgnore` watch per gate) and -- on adopted elements only, which
-    already carry a maid -- one more `UnrestIgnore` watch each. Nothing is connected to an
+    already carry a scope -- one more `UnrestIgnore` watch each. Nothing is connected to an
     instance the framework does not manage and could not adopt.
 
     ---------------------------------------------------------------------------
@@ -122,9 +122,9 @@
 local Adapters = require(script.Parent.Adapters)
 local Cascade = require(script.Parent.Adapters.Cascade)
 local Constants = require(script.Parent.Constants)
-local Maid = require(script.Parent.Util.Maid)
 local Presets = require(script.Parent.Presets)
 local Query = require(script.Parent.Adapters.Query)
+local Scope = require(script.Parent.Util.Scope)
 local Selector = require(script.Parent.Adapters.Selector)
 local Signal = require(script.Parent.Util.Signal)
 local Types = require(script.Parent.Types)
@@ -198,10 +198,10 @@ end
     boundary, so the connection count is (chain length x 3) and a screen is the widest it can
     ever get.
 ]]
-local function watchAncestors(instance: Instance, maid: Types.Maid, onChanged: () -> ()): ()
+local function watchAncestors(instance: Instance, scope: Types.Scope, onChanged: () -> ()): ()
     for _, ancestor in Selector.ancestorChain(instance) do
         for _, name in INHERITABLE do
-            maid:Add(ancestor:GetAttributeChangedSignal(name):Connect(onChanged))
+            Scope.add(scope, ancestor:GetAttributeChangedSignal(name):Connect(onChanged))
         end
     end
 end
@@ -217,7 +217,7 @@ end
 
 --[[
     Rebuilds `element.Attributes`, `element.Sources` and `element.Preset`, and installs this
-    element's watches on the chain above it into `maid`.
+    element's watches on the chain above it into `scope`.
 
     Not a merge of three layers any more: every key is asked of `Selector.attributeOf`, which
     *is* the three layers -- own, then preset, then the nearest ancestor's, most specific
@@ -228,12 +228,12 @@ end
     preset supplies, so a preset carrying a name outside `WATCHED` still lands in
     `element.Attributes` and still records where it came from.
 ]]
-local function resolve(element: Types.ManagedElement, maid: Types.Maid, onAncestorChanged: () -> ()): ()
+local function resolve(element: Types.ManagedElement, scope: Types.Scope, onAncestorChanged: () -> ()): ()
     local instance = element.Instance
     local attributes: { [string]: any } = {}
     local sources: { [string]: Types.AttributeSource } = {}
 
-    watchAncestors(instance, maid, onAncestorChanged)
+    watchAncestors(instance, scope, onAncestorChanged)
 
     local presetName, preset, presetFrom = Selector.presetFor(instance)
     element.Preset = if preset ~= nil then presetName else nil
@@ -315,11 +315,11 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     local managed: { [Instance]: Types.ManagedElement } = {}
     --- Lives as long as the adoption: the Destroying hook, the ancestry hook and the
     --- watches on the element's own attributes.
-    local adoption: { [Instance]: Types.Maid } = {}
+    local adoption: { [Instance]: Types.Scope } = {}
     --- Torn down and rebuilt on every attribute change: the command and channel wiring.
-    local wiring: { [Instance]: Types.Maid } = {}
+    local wiring: { [Instance]: Types.Scope } = {}
     --- Torn down and rebuilt alongside it: this element's watches on its ancestor chain.
-    local ancestry: { [Instance]: Types.Maid } = {}
+    local ancestry: { [Instance]: Types.Scope } = {}
     --- Adoption order, so `All()` is stable rather than hash-ordered.
     local order: { Instance } = {}
     --[[
@@ -329,14 +329,13 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
     ]]
     local byTag: { [Instance]: true } = {}
 
-    local lifetime = Maid.new()
+    local lifetime = Scope.scope()
     local started = false
     local destroyed = false
 
     local managedAdded: Types.Signal<Types.ManagedElement> = Signal.new("Elements.ManagedAdded")
     local managedRemoved: Types.Signal<Types.ManagedElement> = Signal.new("Elements.ManagedRemoved")
-    lifetime:Add(managedAdded)
-    lifetime:Add(managedRemoved)
+    Scope.addBulk(lifetime, managedAdded, managedRemoved)
 
     local manager = {
         ManagedAdded = managedAdded,
@@ -351,7 +350,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         button double-firing on a fat-fingered double click; it lives entirely in this
         element's memory and is forgotten when the element is released.
     ]]
-    local function wireCommand(element: Types.ManagedElement, maid: Types.Maid): ()
+    local function wireCommand(element: Types.ManagedElement, scope: Types.Scope): ()
         local instance = element.Instance
         local command = readString(element.Attributes, ATTRIBUTES.Command)
         if command == nil then
@@ -378,7 +377,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
                 end
                 bridge:Dispatch(command, payload)
             end,
-        }, maid, hint, true)
+        }, scope, hint, true)
     end
 
     --[[
@@ -389,7 +388,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         what they meant). It must be on the adapter's `Bindable` allowlist either way: a
         published value is never permitted to write an arbitrary property.
     ]]
-    local function wireChannel(element: Types.ManagedElement, maid: Types.Maid): ()
+    local function wireChannel(element: Types.ManagedElement, scope: Types.Scope): ()
         local instance = element.Instance
         local channel = readString(element.Attributes, ATTRIBUTES.Channel)
         if channel == nil then
@@ -419,48 +418,51 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         local format = readString(element.Attributes, ATTRIBUTES.Format)
         local writable = instance :: any
 
-        maid:Add(bridge:Subscribe(channel, function(value: any)
-            local painted: any = value
-            if format ~= nil then
-                painted = applyFormat(format, value)
-            elseif value == nil then
-                -- No Roblox property accepts nil. Without a format there is nothing to write.
-                return
-            end
+        Scope.add(
+            scope,
+            bridge:Subscribe(channel, function(value: any)
+                local painted: any = value
+                if format ~= nil then
+                    painted = applyFormat(format, value)
+                elseif value == nil then
+                    -- No Roblox property accepts nil. Without a format there is nothing to write.
+                    return
+                end
 
-            local ok, err = pcall(function()
-                writable[target] = painted
+                local ok, err = pcall(function()
+                    writable[target] = painted
+                end)
+                if not ok then
+                    warn(
+                        `[Unrest.Elements] {instance:GetFullName()} could not write {typeof(painted)} into `
+                            .. `{instance.ClassName}.{target} from channel "{channel}": {tostring(err)}. `
+                            .. `Add {ATTRIBUTES.Format} to render the value as text, or publish a matching type.`
+                    )
+                end
             end)
-            if not ok then
-                warn(
-                    `[Unrest.Elements] {instance:GetFullName()} could not write {typeof(painted)} into `
-                        .. `{instance.ClassName}.{target} from channel "{channel}": {tostring(err)}. `
-                        .. `Add {ATTRIBUTES.Format} to render the value as text, or publish a matching type.`
-                )
-            end
-        end))
+        )
     end
 
     --[[
         Re-runs the whole resolution and rebuilds the wiring from scratch.
 
-        Cleaning the ancestry maid first is what makes a reparent safe: the watches on the
+        Cleaning the ancestry scope first is what makes a reparent safe: the watches on the
         old chain go before the new chain is walked, so an element that moves holds
         connections to its new ancestors only and an ancestor that stops being one is left
-        with nothing attached. A released element clears both maids through the adoption
-        maid that owns them, so a destroyed ancestor can never keep this element alive.
+        with nothing attached. A released element clears both scopes through the adoption
+        scope that owns them, so a destroyed ancestor can never keep this element alive.
     ]]
     local function rewire(element: Types.ManagedElement): ()
         local instance = element.Instance
-        local wiringMaid = wiring[instance]
-        local ancestryMaid = ancestry[instance]
-        if wiringMaid == nil or ancestryMaid == nil then
+        local wiringScope = wiring[instance]
+        local ancestryScope = ancestry[instance]
+        if wiringScope == nil or ancestryScope == nil then
             return
         end
-        wiringMaid:Clean()
-        ancestryMaid:Clean()
+        Scope.clean(wiringScope)
+        Scope.clean(ancestryScope)
 
-        resolve(element, ancestryMaid, function()
+        resolve(element, ancestryScope, function()
             rewire(element)
         end)
 
@@ -469,8 +471,8 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         -- `element.Group` and `Query({ Group = ... })` are one answer, not two.
         element.Group = Selector.groupOf(instance)
 
-        wireCommand(element, wiringMaid)
-        wireChannel(element, wiringMaid)
+        wireCommand(element, wiringScope)
+        wireChannel(element, wiringScope)
     end
 
     --------------------------------------------------------------------------------
@@ -512,7 +514,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             return table.clone(order)
         end,
     })
-    lifetime:Add(cascade)
+    Scope.add(lifetime, cascade)
 
     function manager:Adopt(instance: Instance): Types.ManagedElement?
         if destroyed then
@@ -548,32 +550,36 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             Released = released,
         }
 
-        local adoptionMaid = Maid.new()
-        local wiringMaid = Maid.new()
-        local ancestryMaid = Maid.new()
-        adoptionMaid:Add(wiringMaid)
-        adoptionMaid:Add(ancestryMaid)
-        adoptionMaid:Add(released)
+        local adoptionScope = Scope.scope()
+        local wiringScope = Scope.scope()
+        local ancestryScope = Scope.scope()
+        Scope.addBulk(adoptionScope, wiringScope, ancestryScope, released)
 
         managed[instance] = element
-        adoption[instance] = adoptionMaid
-        wiring[instance] = wiringMaid
-        ancestry[instance] = ancestryMaid
+        adoption[instance] = adoptionScope
+        wiring[instance] = wiringScope
+        ancestry[instance] = ancestryScope
         table.insert(order, instance)
 
         -- Editing an attribute in Studio while the game runs re-wires this element only.
         for _, attribute in WATCHED do
-            adoptionMaid:Add(instance:GetAttributeChangedSignal(attribute):Connect(function()
-                rewire(element)
-            end))
+            Scope.add(
+                adoptionScope,
+                instance:GetAttributeChangedSignal(attribute):Connect(function()
+                    rewire(element)
+                end)
+            )
         end
         --[[
             `UnrestIgnore` is structural rather than wiring, so it never joins the merge and
             never re-resolves anything: it decides whether this element is here at all.
         ]]
-        adoptionMaid:Add(instance:GetAttributeChangedSignal(ATTRIBUTES.Ignore):Connect(function()
-            cascade:IgnoreChanged(instance)
-        end))
+        Scope.add(
+            adoptionScope,
+            instance:GetAttributeChangedSignal(ATTRIBUTES.Ignore):Connect(function()
+                cascade:IgnoreChanged(instance)
+            end)
+        )
         --[[
             Moving an element changes which ancestors it inherits from, so the answer has to
             be computed again against the new chain. `AncestryChanged` fires for a move
@@ -586,16 +592,22 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             resolving an element against ancestors it no longer has is work with a wrong
             answer at the end of it.
         ]]
-        adoptionMaid:Add(instance.AncestryChanged:Connect(function()
-            if byTag[instance] and not Selector.isManaged(instance) then
+        Scope.add(
+            adoptionScope,
+            instance.AncestryChanged:Connect(function()
+                if byTag[instance] and not Selector.isManaged(instance) then
+                    typed:Release(instance)
+                    return
+                end
+                rewire(element)
+            end)
+        )
+        Scope.add(
+            adoptionScope,
+            instance.Destroying:Connect(function()
                 typed:Release(instance)
-                return
-            end
-            rewire(element)
-        end))
-        adoptionMaid:Add(instance.Destroying:Connect(function()
-            typed:Release(instance)
-        end))
+            end)
+        )
 
         rewire(element)
         managedAdded:Fire(element)
@@ -613,7 +625,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         wiring[instance] = nil
         ancestry[instance] = nil
         byTag[instance] = nil
-        local adoptionMaid = adoption[instance]
+        local adoptionScope = adoption[instance]
         adoption[instance] = nil
 
         local index = table.find(order, instance)
@@ -621,12 +633,12 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
             table.remove(order, index)
         end
 
-        -- Announce before tearing down: the maid owns the `Released` signal itself.
+        -- Announce before tearing down: the scope owns the `Released` signal itself.
         element.Released:Fire(element)
         managedRemoved:Fire(element)
 
-        if adoptionMaid ~= nil then
-            adoptionMaid:Destroy()
+        if adoptionScope ~= nil then
+            Scope.destroy(adoptionScope)
         end
     end
 
@@ -683,7 +695,7 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         table.clear(order)
         table.clear(byTag)
 
-        lifetime:Destroy()
+        Scope.destroy(lifetime)
     end
 
     return typed

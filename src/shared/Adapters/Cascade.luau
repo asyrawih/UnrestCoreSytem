@@ -51,7 +51,7 @@
 local CollectionService = game:GetService("CollectionService")
 
 local Constants = require(script.Parent.Parent.Constants)
-local Maid = require(script.Parent.Parent.Util.Maid)
+local Scope = require(script.Parent.Parent.Util.Scope)
 local Selector = require(script.Parent.Selector)
 local Types = require(script.Parent.Parent.Types)
 
@@ -92,11 +92,11 @@ local Cascade = {}
 
 --- Creates a ledger. Nothing is connected until `:Source(tag)`.
 function Cascade.new(host: CascadeHost): CascadeEngine
-    local lifetime = Maid.new()
+    local lifetime = Scope.scope()
     --- One `DescendantAdded` per tagged root, so cascaded arrivals are seen.
-    local roots: { [Instance]: Types.Maid } = {}
+    local roots: { [Instance]: Types.Scope } = {}
     --- `UnrestIgnore` watches on instances that shape the covered set without being in it.
-    local gates: { [Instance]: Types.Maid } = {}
+    local gates: { [Instance]: Types.Scope } = {}
     local destroyed = false
 
     local engine = {}
@@ -133,27 +133,30 @@ function Cascade.new(host: CascadeHost): CascadeEngine
             return
         end
 
-        local maid = Maid.new()
-        gates[instance] = maid
-        maid:Add(instance:GetAttributeChangedSignal(IGNORE):Connect(function()
-            onIgnoreChanged(instance)
-        end))
-        maid:Add(instance.Destroying:Connect(function()
-            local watcher = gates[instance]
-            gates[instance] = nil
-            if watcher ~= nil then
-                watcher:Destroy()
-            end
-        end))
+        local scope = Scope.scope()
+        gates[instance] = scope
+        Scope.addBulk(
+            scope,
+            instance:GetAttributeChangedSignal(IGNORE):Connect(function()
+                onIgnoreChanged(instance)
+            end),
+            instance.Destroying:Connect(function()
+                local watcher = gates[instance]
+                gates[instance] = nil
+                if watcher ~= nil then
+                    Scope.destroy(watcher)
+                end
+            end)
+        )
     end
 
     local function dropGate(instance: Instance): ()
-        local maid = gates[instance]
-        if maid == nil then
+        local scope = gates[instance]
+        if scope == nil then
             return
         end
         gates[instance] = nil
-        maid:Destroy()
+        Scope.destroy(scope)
     end
 
     --- Everything the cascade reaches under `root`, plus the gates that keep it live.
@@ -220,17 +223,20 @@ function Cascade.new(host: CascadeHost): CascadeEngine
             return
         end
 
-        local maid = Maid.new()
-        roots[root] = maid
-        maid:Add(root.DescendantAdded:Connect(function(instance: Instance)
-            if destroyed then
-                return
-            end
-            for _, gate in Selector.gatesAbove(instance, root) do
-                watchGate(gate)
-            end
-            reconcile(instance)
-        end))
+        local scope = Scope.scope()
+        roots[root] = scope
+        Scope.add(
+            scope,
+            root.DescendantAdded:Connect(function(instance: Instance)
+                if destroyed then
+                    return
+                end
+                for _, gate in Selector.gatesAbove(instance, root) do
+                    watchGate(gate)
+                end
+                reconcile(instance)
+            end)
+        )
     end
 
     --[[
@@ -255,10 +261,10 @@ function Cascade.new(host: CascadeHost): CascadeEngine
         second tagged ancestor still covers keeps answering yes to the same question.
     ]]
     local function onTagRemoved(root: Instance): ()
-        local maid = roots[root]
-        if maid ~= nil then
+        local scope = roots[root]
+        if scope ~= nil then
             roots[root] = nil
-            maid:Destroy()
+            Scope.destroy(scope)
         end
 
         reconcileUnder(root)
@@ -281,8 +287,11 @@ function Cascade.new(host: CascadeHost): CascadeEngine
             return
         end
 
-        lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(onTagAdded))
-        lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(onTagRemoved))
+        Scope.addBulk(
+            lifetime,
+            CollectionService:GetInstanceAddedSignal(tag):Connect(onTagAdded),
+            CollectionService:GetInstanceRemovedSignal(tag):Connect(onTagRemoved)
+        )
 
         for _, root in CollectionService:GetTagged(tag) do
             onTagAdded(root)
@@ -299,16 +308,16 @@ function Cascade.new(host: CascadeHost): CascadeEngine
         end
         destroyed = true
 
-        for _, maid in roots do
-            maid:Destroy()
+        for _, scope in roots do
+            Scope.destroy(scope)
         end
         table.clear(roots)
-        for _, maid in gates do
-            maid:Destroy()
+        for _, scope in gates do
+            Scope.destroy(scope)
         end
         table.clear(gates)
 
-        lifetime:Destroy()
+        Scope.destroy(lifetime)
     end
 
     return typed

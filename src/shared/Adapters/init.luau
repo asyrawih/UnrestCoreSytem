@@ -36,6 +36,7 @@ local Interaction = require(script.Classes.Interaction)
 local LayerCollectors = require(script.Classes.LayerCollectors)
 local Primitives = require(script.Parent.Primitives)
 local Resolver = require(script.Parent.Util.Resolver)
+local Scope = require(script.Parent.Util.Scope)
 local Signal = require(script.Parent.Util.Signal)
 local Text = require(script.Classes.Text)
 local Types = require(script.Types)
@@ -360,7 +361,7 @@ function Adapters.rejects(
 end
 
 --[[
-    Attaches a handler table to one element and parks the connections in `maid`.
+    Attaches a handler table to one element and parks the connections in `scope`.
 
     Shared by the query engine and the ElementManager so that "a Frame cannot Submit" is
     decided in exactly one place, whether the handler came from Luau or from an attribute.
@@ -382,7 +383,7 @@ function Adapters.bind(
     registry: Types.AdapterRegistry,
     element: Instance,
     handlers: Types.Handlers,
-    maid: Primitives.Maid,
+    scope: Primitives.Scope,
     hint: string,
     soft: boolean?
 ): ()
@@ -415,7 +416,7 @@ function Adapters.bind(
             handler(element, value)
         end)
         if connection ~= nil then
-            maid:Add(connection)
+            Scope.add(scope, connection)
         end
     end
 end

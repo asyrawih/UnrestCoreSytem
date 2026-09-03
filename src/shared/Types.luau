@@ -36,8 +36,6 @@ export type Cleanup = Primitives.Cleanup
 export type Connection = Primitives.Connection
 export type Destroyable = Primitives.Destroyable
 export type Disconnectable = Primitives.Disconnectable
-export type MaidTask = Primitives.MaidTask
-export type Maid = Primitives.Maid
 export type Signal<T...> = Primitives.Signal<T...>
 export type Scope = Primitives.Scope
 --[[

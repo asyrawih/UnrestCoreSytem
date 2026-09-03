@@ -20,18 +20,6 @@ export type Connection = {
 export type Destroyable = { Destroy: (self: any) -> () }
 export type Disconnectable = { Disconnect: (self: any) -> () }
 
---- Every value a `Maid` knows how to clean up.
-export type MaidTask = Instance | RBXScriptConnection | thread | Cleanup | Destroyable | Disconnectable
-
---- Deterministic, ordered cleanup container. Tasks are cleaned in reverse insertion order.
-export type Maid = {
-    Add: (self: Maid, item: MaidTask, key: string?) -> MaidTask,
-    Remove: (self: Maid, key: string) -> (),
-    Clean: (self: Maid) -> (),
-    Destroy: (self: Maid) -> (),
-    IsDestroyed: (self: Maid) -> boolean,
-}
-
 --[[
     A cleanup scope: an opaque integer handle into Scythe's storage.
 

@@ -31,7 +31,7 @@
     traceback, and the other handlers still run.
 ]]
 
-local Maid = require(script.Parent.Util.Maid)
+local Scope = require(script.Parent.Util.Scope)
 local Signal = require(script.Parent.Util.Signal)
 local Types = require(script.Parent.Types)
 
@@ -50,7 +50,7 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
 
     local channels: { [string]: Channel } = {}
     local handlers: { [string]: { Types.CommandHandler } } = {}
-    local lifetime = Maid.new()
+    local lifetime = Scope.scope()
     local destroyed = false
 
     local bridge = {
@@ -79,7 +79,7 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
                 Signal = Signal.new(`Bridge.Channel[{name}]`),
             }
             channels[name] = created
-            lifetime:Add(created.Signal)
+            Scope.add(lifetime, created.Signal)
             return created
         end
         return channel
@@ -212,7 +212,7 @@ function Bridge.new(context: Types.RuntimeContext): Types.Bridge
 
         table.clear(channels)
         table.clear(handlers)
-        lifetime:Destroy()
+        Scope.destroy(lifetime)
     end
 
     return (bridge :: any) :: Types.Bridge

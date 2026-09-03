@@ -9,11 +9,11 @@
 
       * watched  -- every candidate the source can produce (everything carrying the tag, or
                     everything in the ancestor subtree). Each watched instance keeps a small
-                    maid holding a `Destroying` connection plus exactly the property and
+                    scope holding a `Destroying` connection plus exactly the property and
                     attribute connections this descriptor actually needs: a `Name` or `Role`
                     filter earns a `Name` watch, a `Role` or `Group` filter earns an
                     attribute watch, and a class-only filter earns neither.
-      * bindings -- the subset that currently matches. Each keeps a maid holding the event
+      * bindings -- the subset that currently matches. Each keeps a scope holding the event
                     connections the adapter created for the handler table.
 
     An instance can therefore join and leave the result set any number of times over its
@@ -61,14 +61,14 @@
     handlers never enters `elements` or `bindings`, so `:Count()` can never report something
     that is wired to nothing, and `Added` / `ElementAdded` fire only for elements that really
     arrived. Recording first, as this used to, left a refused element counted, handed out by
-    `:Elements()`, holding a maid with nothing in it, and announced by no signal at all.
+    `:Elements()`, holding a scope with nothing in it, and announced by no signal at all.
 
     `Bind` is atomic. The merge is proposed against a copy, every element the query currently
     holds is asked whether it can take that copy, and only "all of them" is allowed to change
     anything. A refusal raises before `bound` or a single binding has been touched. Merging
     first and rebuilding afterwards -- which is what it used to do -- failed three ways at
     once on a heterogeneous set: the elements the loop had already reached were rebuilt around
-    the new handler, the one that raised and every element after it were left with a maid that
+    the new handler, the one that raised and every element after it were left with a scope that
     had been cleaned and never refilled, and the handler that could not bind stayed in `bound`
     so every later arrival raised on it too.
 
@@ -105,8 +105,8 @@ local CollectionService = game:GetService("CollectionService")
 local Adapters = require(script.Parent)
 local Cascade = require(script.Parent.Cascade)
 local Constants = require(script.Parent.Parent.Constants)
-local Maid = require(script.Parent.Parent.Util.Maid)
 local Resolver = require(script.Parent.Parent.Util.Resolver)
+local Scope = require(script.Parent.Parent.Util.Scope)
 local Selector = require(script.Parent.Selector)
 local Signal = require(script.Parent.Parent.Util.Signal)
 local Types = require(script.Parent.Parent.Types)
@@ -137,9 +137,9 @@ function Query.new(
     --- Whether this descriptor's tag is the framework's own, and therefore cascades.
     local cascading = tag ~= nil and Selector.cascades(tag)
 
-    local lifetime = Maid.new()
-    local watched: { [Instance]: Types.Maid } = {}
-    local bindings: { [Instance]: Types.Maid } = {}
+    local lifetime = Scope.scope()
+    local watched: { [Instance]: Types.Scope } = {}
+    local bindings: { [Instance]: Types.Scope } = {}
     local elements: { Instance } = {}
     --[[
         The cascade ledger, built once `watch` and `unwatch` exist because they are what it
@@ -158,8 +158,7 @@ function Query.new(
 
     local elementAdded: Types.Signal<Instance> = Signal.new("Query.ElementAdded")
     local elementRemoved: Types.Signal<Instance> = Signal.new("Query.ElementRemoved")
-    lifetime:Add(elementAdded)
-    lifetime:Add(elementRemoved)
+    Scope.addBulk(lifetime, elementAdded, elementRemoved)
 
     local handle = {
         Selector = compiled,
@@ -175,7 +174,7 @@ function Query.new(
         end
 
         bindings[element] = nil
-        binding:Destroy()
+        Scope.destroy(binding)
 
         local index = table.find(elements, element)
         if index ~= nil then
@@ -215,7 +214,7 @@ function Query.new(
             return
         end
 
-        local binding = Maid.new()
+        local binding = Scope.scope()
         Adapters.bind(registry, element, bound, binding, hint)
 
         bindings[element] = binding
@@ -243,7 +242,7 @@ function Query.new(
         local watcher = watched[element]
         if watcher ~= nil then
             watched[element] = nil
-            watcher:Destroy()
+            Scope.destroy(watcher)
         end
         detach(element)
     end
@@ -259,18 +258,17 @@ function Query.new(
         `UnrestPreset` on a ScreenGui can supply the group, and swapping it has to move the
         elements underneath the same way editing `UnrestGroup` there does.
 
-        Rebuilt under a keyed maid slot, so reparenting drops the previous chain outright
-        rather than accumulating connections to ancestors the element no longer has.
+        `chain` is a scope of its own, cleaned and refilled rather than replaced, so
+        reparenting drops the previous chain outright instead of accumulating connections to
+        ancestors the element no longer has. It is linked under the element's watcher, so it
+        goes when the watcher does.
     ]]
-    local function bindAncestry(element: Instance, watcher: Types.Maid): ()
-        local chain = Maid.new()
-        watcher:Add(chain, "ancestry")
+    local function bindAncestry(element: Instance, chain: Types.Scope, onChanged: () -> ()): ()
+        Scope.clean(chain)
 
         for _, ancestor in Selector.ancestorChain(element) do
             for _, attribute in ancestorAttributes do
-                chain:Add(ancestor:GetAttributeChangedSignal(attribute):Connect(function()
-                    evaluate(element)
-                end))
+                Scope.add(chain, ancestor:GetAttributeChangedSignal(attribute):Connect(onChanged))
             end
         end
     end
@@ -285,22 +283,32 @@ function Query.new(
         end
 
         if watched[element] == nil then
-            local watcher = Maid.new()
+            local watcher = Scope.scope()
             watched[element] = watcher
+
+            --[[
+                One closure, reused by every connection below. Built per candidate rather than
+                per signal: the three loops here would otherwise mint a closure apiece, and
+                `bindAncestry` one per ancestor per attribute, all of them the same two lines.
+            ]]
+            local function onChanged(): ()
+                evaluate(element)
+            end
+
+            local chain: Types.Scope? = nil
+            if watchesAncestors then
+                chain = Scope.add(watcher, Scope.scope())
+            end
 
             -- A rename, or an edit to UnrestRole / UnrestGroup, can move an element in or out.
             for _, property in watchedProperties do
-                watcher:Add(element:GetPropertyChangedSignal(property):Connect(function()
-                    evaluate(element)
-                end))
+                Scope.add(watcher, element:GetPropertyChangedSignal(property):Connect(onChanged))
             end
             for _, attribute in watchedAttributes do
-                watcher:Add(element:GetAttributeChangedSignal(attribute):Connect(function()
-                    evaluate(element)
-                end))
+                Scope.add(watcher, element:GetAttributeChangedSignal(attribute):Connect(onChanged))
             end
-            if watchesAncestors then
-                bindAncestry(element, watcher)
+            if chain ~= nil then
+                bindAncestry(element, chain, onChanged)
             end
 
             --[[
@@ -310,32 +318,41 @@ function Query.new(
                 all. One connection answers both.
             ]]
             if cascading or watchesAncestors then
-                watcher:Add(element.AncestryChanged:Connect(function()
-                    if watchesAncestors then
-                        bindAncestry(element, watcher)
-                    end
-                    local ledger = cascade
-                    if ledger ~= nil then
-                        ledger:Reconcile(element)
-                    else
-                        evaluate(element)
-                    end
-                end))
+                Scope.add(
+                    watcher,
+                    element.AncestryChanged:Connect(function()
+                        if chain ~= nil then
+                            bindAncestry(element, chain, onChanged)
+                        end
+                        local ledger = cascade
+                        if ledger ~= nil then
+                            ledger:Reconcile(element)
+                        else
+                            evaluate(element)
+                        end
+                    end)
+                )
             end
             if cascading then
                 -- Excluding this element excludes everything under it, so the whole subtree
                 -- is re-asked rather than just this one.
-                watcher:Add(element:GetAttributeChangedSignal(Constants.Attributes.Ignore):Connect(function()
-                    local ledger = cascade
-                    if ledger ~= nil then
-                        ledger:IgnoreChanged(element)
-                    end
-                end))
+                Scope.add(
+                    watcher,
+                    element:GetAttributeChangedSignal(Constants.Attributes.Ignore):Connect(function()
+                        local ledger = cascade
+                        if ledger ~= nil then
+                            ledger:IgnoreChanged(element)
+                        end
+                    end)
+                )
             end
 
-            watcher:Add(element.Destroying:Connect(function()
-                unwatch(element)
-            end))
+            Scope.add(
+                watcher,
+                element.Destroying:Connect(function()
+                    unwatch(element)
+                end)
+            )
         end
 
         evaluate(element)
@@ -370,8 +387,11 @@ function Query.new(
             cascade = engine
             engine:Source(tag)
         else
-            lifetime:Add(CollectionService:GetInstanceAddedSignal(tag):Connect(watch))
-            lifetime:Add(CollectionService:GetInstanceRemovedSignal(tag):Connect(unwatch))
+            Scope.addBulk(
+                lifetime,
+                CollectionService:GetInstanceAddedSignal(tag):Connect(watch),
+                CollectionService:GetInstanceRemovedSignal(tag):Connect(unwatch)
+            )
             for _, element in CollectionService:GetTagged(tag) do
                 watch(element)
             end
@@ -379,14 +399,16 @@ function Query.new(
     else
         local ancestor = compiled.Ancestor :: Instance
         if compiled.Recursive then
-            lifetime:Add(ancestor.DescendantAdded:Connect(watch))
-            lifetime:Add(ancestor.DescendantRemoving:Connect(unwatch))
+            Scope.addBulk(
+                lifetime,
+                ancestor.DescendantAdded:Connect(watch),
+                ancestor.DescendantRemoving:Connect(unwatch)
+            )
             for _, element in ancestor:GetDescendants() do
                 watch(element)
             end
         else
-            lifetime:Add(ancestor.ChildAdded:Connect(watch))
-            lifetime:Add(ancestor.ChildRemoved:Connect(unwatch))
+            Scope.addBulk(lifetime, ancestor.ChildAdded:Connect(watch), ancestor.ChildRemoved:Connect(unwatch))
             for _, element in ancestor:GetChildren() do
                 watch(element)
             end
@@ -443,12 +465,12 @@ function Query.new(
         bound = proposed
 
         --[[
-            Every element has already said yes, so nothing below can raise and leave a maid
+            Every element has already said yes, so nothing below can raise and leave a scope
             cleaned but unfilled. Rebuilt rather than added to, so a replaced handler does not
             leave its predecessor connected alongside it.
         ]]
         for element, binding in bindings do
-            binding:Clean()
+            Scope.clean(binding)
             Adapters.bind(registry, element, bound, binding, hint)
         end
 
@@ -473,7 +495,7 @@ function Query.new(
             ledger:Destroy()
         end
 
-        lifetime:Destroy()
+        Scope.destroy(lifetime)
     end
 
     return typed
