@@ -188,6 +188,12 @@ exists. Without the secret that last step is skipped rather than failed — a
 GitHub release is useful on its own, and an unset secret should not look like a
 broken build.
 
+An *attempted* publish that fails is a different matter, and is now fatal.
+`wally publish` reports its failures on stdout and still exits 0, so a rejected
+token used to leave the step green: v0.2.0 was tagged, released, and never
+reached Wally, and nothing said so. The step now reads the publish output and
+then asks the registry whether the version actually landed, failing on either.
+
 To enable the Wally half: `wally login` locally, then copy the token out of
 `~/.rokit/auth.toml` into a repository secret named `WALLY_AUTH_TOKEN`.
 
