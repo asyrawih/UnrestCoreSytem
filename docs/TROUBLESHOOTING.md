@@ -48,8 +48,8 @@ Bindable is an allowlist, so a channel value can never write an arbitrary proper
 register an adapter that permits it if you need it.
 ```
 
-**Artinya:** `Bindable` adalah daftar-izin, dengan sengaja. Nilai channel bisa datang dari
-server, jadi dia tidak boleh menulis properti sembarangan.
+**Artinya:** `Bindable` adalah daftar-izin, dengan sengaja. Nilai channel bisa berasal dari mana
+saja di dalam proses ini, jadi dia tidak boleh menulis properti sembarangan.
 
 **Perbaikannya:** pakai properti dari tabel bindable kelas itu di
 [Cakupan Adapter](UI-ADAPTERS.md), atau daftarkan adapter yang mengizinkannya lewat
@@ -80,7 +80,47 @@ fix the spelling, or declare it with Presets.Register("MusicTogle", ...).
 **Artinya:** salah ketik pada `UnrestPreset`. Elemennya **tetap diadopsi**, dengan atributnya
 sendiri saja.
 
-**Perbaikannya:** perbaiki ejaannya, atau daftarkan presetnya di `src/game/Presets.luau`.
+**Perbaikannya:** perbaiki ejaannya, atau daftarkan presetnya dengan `Presets.Register` di kode
+game-mu, sebelum layarnya diadopsi.
+
+### Widget dipanggil di server
+
+```
+[Unrest.Widgets] :Each() is client-only -- the server has no screen to find widgets on.
+```
+
+**Artinya:** `Unrest.Widgets:Each` dan `:Drag` **melempar error** di server. Widget adalah
+sesuatu di layar, dan server tidak punya layar; diam-diam tidak melakukan apa-apa cuma akan
+menyembunyikan kesalahannya sampai jauh belakangan.
+
+**Perbaikannya:** pindahkan panggilannya ke `src/game-client/`. Lihat
+[API Widgets](API-WIDGETS.md).
+
+### Sebuah peran tanpa grup
+
+```
+[Unrest.Widgets] game.Players.You.PlayerGui.Menu.Knob plays "Knob" but sets no UnrestGroup,
+so there is no widget for it to join.
+```
+
+**Artinya:** `UnrestGroup` adalah satu-satunya hal yang menyatukan beberapa bagian jadi satu
+widget. Tanpa itu, bagian ini tidak punya widget untuk dimasuki, jadi dia diabaikan.
+
+**Perbaikannya:** setel `UnrestGroup` — biasanya sekali saja, di wadah tempat bagian-bagian itu
+tinggal, karena `UnrestGroup` diwariskan ke keturunannya.
+
+### Dua instance mengaku peran yang sama
+
+```
+[Unrest.Widgets] ...Menu.Slider2.Knob also plays "Knob" for group "Musik", which
+...Menu.Slider1.Knob already fills. Ignoring the second one -- give it its own UnrestGroup.
+```
+
+**Artinya:** dua bagian dengan peran yang sama di bawah satu `UnrestGroup` adalah kesalahan di
+layarnya, bukan penggantian. Yang **pertama** dipertahankan; diam-diam memilih yang belakangan
+akan menyambungkan mana pun yang kebetulan ditemukan terakhir.
+
+**Perbaikannya:** beri slider kedua `UnrestGroup`-nya sendiri.
 
 ---
 
@@ -89,12 +129,8 @@ sendiri saja.
 | Gejala | Penyebab | Perbaikan |
 | --- | --- | --- |
 | Tidak ada yang diadopsi sama sekali | Tidak ada yang membawa tag pada salinan milik client | Beri tag di `StarterGui` lewat **View → Tag Editor**, bukan di `PlayerGui` sesi yang sedang jalan. Ingat tagnya **menurun**: menandai `ScreenGui` sudah cukup untuk semua `GuiObject` di bawahnya |
-| Diadopsi, tapi atributnya seperti diabaikan | Atributnya salah eja, atau ada di instance yang salah | Nama atribut **case-sensitive** dan diawali `Unrest`. `UnrestRole`, `UnrestCommand`, `UnrestPayload`, `UnrestChannel`, `UnrestBind`, dan `UnrestFormat` **tidak pernah diwariskan** — ketiganya harus ada di elemennya sendiri |
-| `refused (NotClientCallable)` | Kontraknya tidak menulis `AllowClient = true` | Pakai perintah yang memang client-callable, atau tambahkan barisnya di `src/game/Contracts.luau` kalau client memang seharusnya boleh meminta. Kesalahannya sama entah datang dari atribut atau dari kode |
-| `refused (UnknownCommand)` | Perintahnya tidak pernah dideklarasikan **di realm ini** | Pastikan **kedua** bootstrap meng-`require(ReplicatedStorage.Game)` sebelum `Unrest:Start()`. Cache ModuleScript terpisah per realm, jadi keduanya harus diberi tahu |
-| `refused (ResponseNotAllowed)` | `Invoke` dipakai untuk perintah tanpa `Response = true` | Tambahkan `Response = true` di kontraknya, atau pakai `Dispatch` |
-| `refused (WrongRealm)` | Server mencoba men-dispatch perintah `Realm = "Client"` | Server tidak menyuruh client. Terbitkan state di sebuah channel dan biarkan client memutuskan |
-| `:Handle(...) was called on the Client, but its contract puts the handler on the Server` | Handler dipasang di realm yang salah | Pindahkan pendaftarannya, atau ubah `Realm` di kontraknya |
+| Diadopsi, tapi atributnya seperti diabaikan | Atributnya salah eja, atau ada di instance yang salah | Nama atribut **case-sensitive** dan diawali `Unrest`. `UnrestRole`, `UnrestCommand`, `UnrestPayload`, `UnrestChannel`, `UnrestBind`, dan `UnrestFormat` **tidak pernah diwariskan** — semuanya harus ada di elemennya sendiri |
+| `UnrestCommand` ditekan, tidak ada yang terjadi | Tidak ada yang memanggil `Bridge:Handle` untuk nama itu | Perintah tanpa handler adalah no-op yang **diam**, bukan galat — itu memang rancangannya. Periksa ejaan namanya di kedua sisi |
 | Mengikat `Changed` dari kode melempar error | Kelasnya tidak punya satu properti nilai — `Frame` tidak punya | Ikat `Changed` ke kelas yang punya (`TextLabel`, `TextButton`, `TextBox`, `ImageLabel`, `ScrollingFrame`, `UICorner`, `UIScale`), atau buang handler-nya |
 | `Query({ Group = ... })` tidak cocok dengan apa pun | Tidak ada di rantainya yang menyetel `UnrestGroup`, atau penelusurannya menabrak `LayerCollector` sebelum sampai ke sana | Setel `UnrestGroup` di `ScreenGui` tempat elemennya benar-benar tinggal. Mewarisi grup **tidak** mengadopsi instance yang tidak dinaungi tag |
 | `sets UnrestChannel but there is nothing to write it into` | Kelasnya tidak punya properti nilai bawaan | Tambahkan `UnrestBind = "<properti>"` |
@@ -104,34 +140,38 @@ sendiri saja.
 | `Hover` tidak pernah menyala di HP | `MouseEnter` khusus mouse | Afordansi yang hanya muncul saat hover tidak terlihat di perangkat sentuh. Jangan jadikan hover satu-satunya petunjuk |
 | `Press` pada `ProximityPrompt` tidak pernah menyala | `HoldDuration` bernilai 0 | Set `HoldDuration > 0`, atau pakai `Active` |
 | `Added` di dalam `:Bind()` tidak menyala | Elemennya sudah tiba lebih dulu | Oper `Added` di panggilan `Query` yang pertama |
-| `:UseTransport must be called before :Start()` | Transport dipasang terlambat | Pindahkan `UseTransport` ke antara `require` dan `:Start()` |
+| `:Each() needs at least one required role` | `Required` kosong | Sebuah grup tidak akan pernah dianggap lengkap kalau tidak ada satu pun peran wajib. Sebutkan minimal satu |
+| `Drag needs a GuiObject for its handle` | `handle` atau `track` bukan `GuiObject` | `Drag` membaca `AbsolutePosition` dan `AbsoluteSize` keduanya. Oper `GuiObject`, bukan `UIListLayout` atau `Folder` |
+| `Scythe.add: scope #3 has already been destroyed` | Scope-nya sudah dibongkar | Scope adalah **handle integer**, bukan objek: sesudah `Scope.destroy` handle itu mati, dan handle yang sudah didaur ulang melapor `stale handle`. Jangan simpan scope milik widget setelah `OnReady`-nya dibongkar — pakai scope baru yang diberikan saat widget itu tersambung lagi |
+| `:Bind called on a destroyed query` | `QueryHandle` sudah di-`Destroy` | Buat query baru; handle yang sudah dibongkar tidak bisa dipakai lagi |
 | `a system named "X" is already registered` | Dua sistem memakai `Name` yang sama | Nama sistem adalah kunci registry dan harus unik |
 | `"X" was registered after startup but depends on "Y"` | Pendaftaran terlambat, dependensinya belum jalan | Daftarkan sebelum `Unrest:Start()`, atau daftarkan dependensinya dulu |
 
 ---
 
-## 4. Kalau client tidak bisa mengirim apa pun
+## 4. Kalau widget tidak pernah tersambung
 
-Periksa tiga hal ini, berurutan:
+`OnReady` baru dipanggil ketika **setiap** peran di `Required` sudah hadir untuk satu grup.
+Periksa empat hal ini, berurutan:
 
-1. **Apakah server sudah memanggil `unrest:OpenGateway()`?** Sebelum baris itu jalan, remote-nya
-   belum ada. Ini bukan penolakan, ini ketiadaan pintu.
-2. **Apakah kedua bootstrap sudah meng-`require(ReplicatedStorage.Game)`?** Kalau client belum,
-   penjaga di client menolak mengirim dengan `UnknownCommand`.
-3. **Apakah kontraknya menulis `AllowClient = true`?** Kalau tidak, `NotClientCallable`, di
-   kedua sisi.
+1. **Apakah semuanya di bawah `PlayerGui` pemain ini?** `Widgets` sengaja mengabaikan apa pun
+   yang bukan keturunan `PlayerGui`. Layar bertag ada dua kali saat game jalan — cetakannya di
+   `StarterGui` dan salinan milik pemain — dan kalau keduanya dihitung, cetakannya bisa merebut
+   nama grupnya lebih dulu dan kontrol pemainnya tidak pernah tersambung.
+2. **Apakah setiap bagian benar-benar diadopsi?** Peran dibaca dari elemen yang sudah diadopsi,
+   jadi bagian yang tidak dinaungi tag — atau yang tertahan `UnrestIgnore` — tidak akan pernah
+   terhitung.
+3. **Apakah semuanya berbagi satu `UnrestGroup`?** Bagian tanpa grup memberi peringatan dan
+   diabaikan; bagian dengan grup yang berbeda membentuk widget lain yang tidak pernah lengkap.
+4. **Apakah `UnrestRole` (atau nama instance-nya) benar-benar sama dengan peran yang kamu
+   sebut?** Peran jatuh balik ke `Instance.Name` kalau `UnrestRole` tidak ada, dan
+   perbandingannya persis.
 
 ---
 
-## 5. Kalau sesuatu di framework yang salah
+## 5. Framework tidak punya saluran galat sendiri
 
-Framework melapor lewat dua sinyal yang bisa kamu sambungkan ke sistem log-mu sendiri:
-
-```luau
-unrest.Bridge.Rejected:Connect(function(rejection)
-    warn(`{rejection.Command}: {rejection.Reason} — {rejection.Detail}`)
-end)
-```
-
-Dan di sisi server, gerbangnya menyalakan `Rejected` serta `AbuseDetected`. Lihat
-[Keamanan Remote](REMOTE-SECURITY.md), bagian 8.
+Tidak ada sinyal galat untuk disambungkan. Framework melapor ke jendela Output saja, dan setiap
+pesan diawali modul yang mengeluarkannya — `[Unrest.Adapters]`, `[Unrest.Elements]`,
+`[Unrest.Query]`, `[Unrest.Resolver]`, `[Unrest.Core]`, `[Unrest.Widgets]`. Menyaring Output
+dengan `[Unrest.` memisahkan laporan framework dari laporan game-mu.

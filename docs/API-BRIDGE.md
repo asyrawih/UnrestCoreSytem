@@ -1,7 +1,7 @@
 # API — `Bridge`
 
-`Bridge` adalah controller framework, sekaligus batas client/server. Dia satu-satunya jalan
-antara logika game dan layar, dan satu-satunya jalan menyeberang jaringan.
+`Bridge` adalah controller framework: satu-satunya jalan antara kode yang memiliki state dan
+layar yang menampilkannya.
 
 ```luau
 local bridge = unrest.Bridge
@@ -9,25 +9,31 @@ local bridge = unrest.Bridge
 
 Definisi tipenya ada di `src/shared/Types.luau`, `export type Bridge`.
 
+**Ini bus lokal.** Tidak ada satu pun yang menyeberang mesin. `Dispatch` di client hanya
+menjangkau handler di client itu juga; `Publish` di server hanya terlihat oleh kode di server
+itu juga. Kalau kamu butuh menyeberang, itu urusan remote milik game-mu — lihat
+[Menyeberang mesin](#menyeberang-mesin) di bawah.
+
 ---
 
 ## Dua arah, empat kata kerja
 
 ```
-  Core  ──Publish──▶  Bridge  ──▶  Elemen di Studio
-    ▲                   │
-    └────Dispatch───────┘
+  Kode yang punya state  ──Publish──▶  Bridge  ──▶  Elemen di Studio
+            ▲                            │
+            └──────────Dispatch──────────┘
 ```
 
 | Arah | Metode | Bentuk |
 | --- | --- | --- |
-| Core → UI | `Publish` / `Subscribe` / `Peek` | ditahan, jadi pelanggan yang telat tetap dapat nilai sekarang |
-| UI → Core | `Dispatch` | kirim dan lupakan, tidak pernah yield |
-| UI → Core | `Invoke` | permintaan/balasan, yield, kontrak harus mengizinkan |
-| mana pun | `Handle` | memasang handler di realm pemilik perintahnya |
+| state → UI | `Publish` / `Subscribe` / `Peek` | **ditahan**, jadi pelanggan yang telat tetap dapat nilai sekarang |
+| UI → state | `Dispatch` | kirim dan lupakan, tidak pernah yield |
+| — | `Handle` | memasang handler; beberapa handler boleh berbagi satu nama |
 
-Yang menentukan sebuah dispatch tetap lokal atau menyeberang kabel adalah **kontraknya**,
-bukan pemanggilnya. Kode client menulis baris yang sama untuk keduanya.
+Yang membuat lapisan ini berharga: **atribut bukan mekanisme kedua.** `UnrestCommand` di
+Studio lewat `Bridge:Dispatch` yang sama persis dan sampai ke handler yang sama persis
+dengan Luau tulisan tangan. Dari sisi seberang Bridge, layar yang dirakit di Studio dan layar
+yang dirakit di kode tidak bisa dibedakan.
 
 ---
 
@@ -37,106 +43,61 @@ bukan pemanggilnya. Kode client menulis baris yang sama untuk keduanya.
 
 `"Server"` atau `"Client"`. Sama dengan `unrest.Context`.
 
-### `Contracts: Contracts`
-
-Registry kontrak. Objek yang **sama persis** dengan yang kamu dapat dari
-`require(ReplicatedStorage.Unrest.Net.Contracts)`, jadi tidak ada dua registry yang bisa
-berbeda pendapat.
-
-```luau
-for _, name in unrest.Bridge.Contracts:List() do
-    print(name)
-end
-```
-
-### `Rejected: Signal<Rejection>`
-
-Menyala setiap kali sebuah permintaan ditolak, di sisi mana pun yang menolaknya.
-
-```luau
-unrest.Bridge.Rejected:Connect(function(rejection)
-    warn(`{rejection.Command} ditolak: {rejection.Reason} — {rejection.Detail}`)
-end)
-```
-
-`Rejection` berisi `Command`, `Reason` (`RejectionReason`), `Detail` (string untuk
-developer), dan `Player?`.
-
-> **`Detail` tidak pernah menyeberang kabel.** Dia dicatat di server dan berhenti di sana.
-> Client yang menyelidik hanya menerima `Reason` yang kasar.
-
 ---
 
 ## Channel — state yang mengalir keluar
 
-### `Bridge:Publish(channel: string, value: any, target: Player?): ()`
+### `Bridge:Publish(channel: string, value: any): ()`
 
-Menerbitkan state yang ditahan.
-
-Di **server**, `Visibility` channel-nya yang memutuskan siapa yang melihat:
-
-| `Visibility` | Yang terjadi |
-| --- | --- |
-| `Server` (bawaan) | Ditahan secara lokal. Tidak pernah direplikasi. |
-| `Player` | **Wajib** ada `target`. Dikirim ke satu pemain itu saja. Tidak ditahan di server. |
-| `Public` | Ditahan, lalu dikirim ke semua client. |
+Menerbitkan state yang **ditahan**: nilainya disimpan, dan setiap pelanggan berikutnya
+langsung menerimanya.
 
 ```luau
--- state milik semua orang
-bridge:Publish("Music.NowPlaying", "Lobby")
-
--- state milik satu pemain
-bridge:Publish("Dance.Current", "Wave", player)
+bridge:Publish("Koin", 120)
 ```
 
-Di **client**, `Publish` hanya menulis ke salinan lokal. State client tidak pernah
-direplikasi: server adalah satu-satunya penulis apa pun yang bisa dilihat pemain lain.
+Penahanan itu yang membuat urutan mount berhenti penting. Label yang baru ditandai tiga
+puluh detik setelah jumlah koin terakhir diterbitkan tetap menampilkan angka yang benar di
+frame pertamanya — tanpa kode, cukup `UnrestChannel = "Koin"`.
 
-**Jebakan yang paling sering kena:**
-
-* Channel `Player` **tanpa** `target` melempar error. Itu disengaja — menyiarkan state
-  per-pemain ke semua orang persis kesalahan yang dicegah kontraknya.
-* Channel `Player` **tidak ditahan di server**. Tidak ada satu "nilai sekarang" untuk channel
-  per-pemain, dan berpura-pura ada akan membuat state satu pemain terbaca sebagai state
-  semua orang lewat `Peek`.
-* Nilai yang gagal validasi **tidak direplikasi**, dan kamu dapat peringatan. Gagalnya
-  tertutup: nilainya tetap lokal, kabelnya tetap bersih. Bahkan channel tanpa `Value` spec
-  tetap diperiksa daftar-izin data biasa, jadi sebuah `Instance` tidak bisa lolos.
+Pelanggan dipanggil **inline**. Pelanggan yang yield akan menahan `Publish` itu sendiri, jadi
+jangan yield di dalamnya; kalau butuh, bungkus dengan `task.spawn` sendiri.
 
 ### `Bridge:Subscribe(channel: string, handler: (value: any) -> ()): Connection`
 
-Berlangganan sebuah channel. Mengembalikan `Connection` dengan `:Disconnect()`.
+Berlangganan. Mengembalikan `Connection` dengan `:Disconnect()`.
 
 ```luau
-local connection = bridge:Subscribe("Music.NowPlaying", function(value)
-    print("sekarang:", value)
+local connection = bridge:Subscribe("Koin", function(nilai)
+    print("koin sekarang:", nilai)
 end)
-
--- nanti
-connection:Disconnect()
 ```
 
-**Kalau channel-nya sudah punya nilai, handler-mu langsung dipanggil** dengan nilai itu,
-lewat `task.spawn`. Inilah yang membuat urutan berhenti penting: label yang baru ditandai
-tiga puluh detik setelah lagu mulai tetap menampilkan lagu yang benar di frame pertamanya.
+**Kalau channel-nya sudah punya nilai, handler-mu langsung dipanggil** dengan nilai itu —
+lewat `task.spawn`, jadi panggilan pertama itu terjadi **setelah** baris `Subscribe` selesai,
+bukan di dalamnya. Itu disengaja: berlangganan biasanya terjadi saat sebuah elemen sedang
+diadopsi, dan handler yang yield tidak boleh menahan adopsi sisa layarnya.
 
-Karena panggilan pertama itu lewat `task.spawn`, dia terjadi **setelah** baris `Subscribe`
-selesai, bukan di dalamnya.
+Simpan `Connection`-nya di sebuah cleanup scope supaya lepasnya satu baris dan tidak bisa
+setengah jadi:
+
+```luau
+unrest.Scope.add(scope, bridge:Subscribe("Koin", perbarui))
+```
 
 ### `Bridge:Peek(channel: string): any`
 
-Nilai terakhir yang diterbitkan di channel itu, atau `nil`.
+Nilai terakhir yang diterbitkan di channel itu, atau `nil`. Tidak yield, tidak membuat
+langganan.
 
 ```luau
-if bridge:Peek("Music.NowPlaying") == nil then
-    unrest:Dispatch("Music.Play", "Lobby")
+if bridge:Peek("Koin") == nil then
+    unrest:Dispatch("Dompet.Muat", nil)
 end
 ```
 
-Ini yang kamu pakai saat perintah yang benar bergantung pada keadaan sekarang — persis
-batas di mana atribut sudah tidak cukup dan kamu turun ke `Unrest:Query`.
-
-`Peek` tidak yield dan tidak membuat langganan.
+Ini yang kamu pakai saat perintah yang benar bergantung pada keadaan sekarang — persis batas
+di mana atribut sudah tidak cukup dan kamu turun ke `Unrest:Query`.
 
 ---
 
@@ -144,128 +105,90 @@ batas di mana atribut sudah tidak cukup dan kamu turun ke `Unrest:Query`.
 
 ### `Bridge:Dispatch(command: string, payload: any): ()`
 
-Mengirim sebuah niat. **Tidak pernah yield.** Tidak mengembalikan apa pun.
+Mengirim sebuah niat ke setiap handler yang terdaftar untuk nama itu. **Tidak pernah yield.**
+Tidak mengembalikan apa pun.
 
 ```luau
-bridge:Dispatch("Music.Play", "Lobby")
+bridge:Dispatch("Toko.Beli", { Player = player, Item = "Pedang" })
 ```
 
-Yang terjadi di dalam, berurutan:
+**Perintah tanpa satu pun handler adalah no-op yang diam**, bukan error. Layar sering dibangun
+sebelum kode di belakangnya, dan tombol yang belum melakukan apa-apa tidak seharusnya
+memuntahkan peringatan tiap kali diklik.
 
-1. Kontraknya dicari. Kalau tidak ada, ditolak `UnknownCommand` dengan peringatan.
-2. Kalau `contract.Realm` sama dengan context sekarang, ini **dispatch lokal**: payload-nya
-   divalidasi terhadap skema kontrak, lalu handler dijalankan langsung.
-3. Kalau context-nya server dan realm-nya client, ditolak `WrongRealm`. **Server tidak
-   pernah menyuruh client.** Server tidak bisa memverifikasi client menurut, jadi perintah ke
-   arah itu bukan mekanisme, cuma saran. Server → client adalah state di channel.
-4. Kalau tidak, dikirim lewat gerbang client.
+Yang **tidak** diam adalah handler yang melempar error: dia ditangkap, dilaporkan lengkap
+dengan traceback-nya, dan handler lain tetap jalan. Satu sistem yang rusak tidak boleh
+menelan klik untuk semua pendengar lainnya.
 
-**Perhatikan langkah 2.** Bahkan dispatch lokal di server pun divalidasi. "Tidak ada handler
-yang pernah melihat payload yang belum divalidasi" adalah jaminan yang dijaga mutlak,
-termasuk terhadap kode server yang salah ketik.
-
-### `Bridge:Invoke(command: string, payload: any): InvokeResult`
-
-Mengirim niat dan **menunggu** nilainya. Yield.
-
-```luau
-local result = bridge:Invoke("Music.Play", "Lobby")
-if result.Ok then
-    print(result.Value)
-else
-    warn(result.Reason)
-end
-```
-
-`InvokeResult` selalu tabel dengan tiga field:
-
-| Field | Tipe | Arti |
-| --- | --- | --- |
-| `Ok` | `boolean` | Berhasil atau tidak. |
-| `Value` | `any` | Kembalian handler, kalau `Ok`. |
-| `Reason` | `RejectionReason?` | Alasan kasar, kalau gagal. |
-
-**Jebakan:**
-
-* Kontraknya **wajib** menulis `Response = true`. Kalau tidak, hasilnya
-  `ResponseNotAllowed` dan tidak ada yang dikirim.
-* **Server tidak pernah meng-invoke client.** `RemoteFunction:InvokeClient` menyerahkan
-  thread server ke mesin yang tidak dikendalikan server, tanpa timeout — client yang tidak
-  pernah menjawab menggantung thread itu selamanya. Jadi mekanismenya tidak ada.
-* Invoke di client dibatasi `Constants.Limits.InvokeTimeout` (10 detik) dan **tidak pernah
-  mencoba ulang**. Percobaan ulang otomatis saat timeout adalah cara server yang sedang
-  kepayahan mendapat salinan kedua dari setiap permintaan yang sudah telat dia kerjakan.
+Handler dijalankan **inline**, satu per satu. Handler yang yield menahan dispatch itu.
 
 ### `Bridge:Handle(command: string, handler: CommandHandler): Connection`
 
-Memasang handler untuk sebuah perintah, **di realm yang memilikinya**. Mengembalikan
-`Connection`.
+Memasang handler. Mengembalikan `Connection`.
 
 ```luau
-local connection = bridge:Handle("Music.Play", function(source, payload)
-    if source.Player == nil then
-        -- dispatch lokal dari kode server, bukan permintaan client
-    end
-    return music:Play(payload :: string)
+local connection = bridge:Handle("Toko.Beli", function(payload)
+    local pembeli = payload.Player :: Player
+    toko:beli(pembeli, payload.Item)
 end)
 ```
 
-`CommandHandler` adalah `(source: CommandSource, payload: any) -> any`.
+`CommandHandler` adalah `(payload: any) -> ()`.
 
-`CommandSource` berisi:
+**Tidak ada argumen `source`.** Setiap dispatch itu lokal — pemanggilnya ada di sisi yang sama
+dari call stack. Kalau kamu butuh tahu pemain mana yang meminta, pemain itu masuk lewat
+remote milik game-mu dan kamu yang menaruhnya di payload, seperti `payload.Player` di atas.
 
-| Field | Tipe | Arti |
-| --- | --- | --- |
-| `Player` | `Player?` | Pemanggilnya. Tidak nil hanya untuk permintaan yang benar-benar menyeberang jaringan. |
-| `Context` | `RuntimeContext` | Realm asal dispatch-nya. |
-| `Remote` | `boolean` | `true` kalau ini datang lewat remote. |
+**Beberapa handler boleh berbagi satu nama.** Semuanya dipanggil, dalam urutan pendaftaran.
 
-**Handler yang mengubah state otoritatif harus bercabang pada `source.Remote`, bukan pada
-isi payload.** Identitas datang dari transport, tidak pernah dari pesan. Tidak ada
-`payload.UserId`, dan tidak ada tempat untuk menaruhnya.
+**Payload tidak divalidasi oleh siapa pun.** Tidak ada kontrak dan tidak ada gerbang di
+lapisan ini. Kalau payload-nya berasal dari client, yang memeriksanya adalah kode yang
+menerima paketnya — sebelum `Dispatch` dipanggil, bukan sesudahnya.
 
-**`payload` tidak perlu kamu periksa tipenya.** Gerbang sudah membuktikannya terhadap skema
-kontraknya sebelum handler dipanggil.
+> Satu detail halus: `Disconnect` yang dipanggil **selama** sebuah dispatch berlaku **di
+> dalam** dispatch itu. Handler yang belum tersentuh tidak akan jalan. Itu semantik sinyal
+> yang normal, dan itu memang yang diminta oleh pemanggil yang men-disconnect.
 
-**Jebakan:**
+---
 
-* `Handle` **melempar error** kalau perintahnya tidak dideklarasikan, dengan daftar perintah
-  yang ada. Handler untuk perintah yang tidak pernah dideklarasikan tidak akan pernah
-  terpanggil, dan menerimanya diam-diam cuma menyembunyikan itu.
-* `Handle` juga **melempar error** kalau dipanggil di realm yang salah. Handler untuk
-  perintah `Realm = "Server"` harus dipasang di server.
-* Handler berjalan di dalam `xpcall`. Satu sistem yang error tidak bisa menggantung gerbang
-  untuk pemain lain; traceback-nya dicatat di sisi server dan pemanggil hanya dapat
-  `HandlerError`.
+## Menyeberang mesin
 
-Simpan `Connection`-nya di sebuah cleanup scope (`unrest.Scope`) supaya ikut terlepas saat sistemnya `Destroy`:
+Framework tidak menyediakannya, dan itu keputusan: dia abstraksi UI, bukan pustaka jaringan.
+Pola sambungannya cuma dua baris di masing-masing sisi. Game contoh di repo ini memakai
+ByteNet di `src/game-net`:
 
-```lua
-unrest.Scope.add(scope, unrest.Bridge:Subscribe("Koin", function(nilai) ... end))
+```luau
+-- src/game-server/init.server.luau — paket masuk jadi niat
+GameNet.packets.Beli.listen(function(data, player: Player?)
+    if player == nil or typeof(data) ~= "table" or typeof(data.Barang) ~= "string" then
+        return
+    end
+    unrest.Bridge:Dispatch("Toko.Beli", { Player = player, Item = data.Barang })
+end)
 ```
+
+```luau
+-- src/game-client/Shop.luau — paket masuk jadi state yang bisa diikuti UI
+GameNet.packets.Koin.listen(function(data)
+    bridge:Publish("Koin", data.Nilai)
+end)
+```
+
+Tiga hal yang harus kamu pegang sendiri, karena tidak ada yang memegangnya untukmu:
+
+* **Identitas datang dari transport, tidak pernah dari pesan.** `player` di atas adalah
+  argumen kedua yang diserahkan ByteNet, diteruskan apa adanya dari `OnServerEvent`. Paket
+  `Beli` sengaja tidak punya field pemain, dan memang tidak boleh punya.
+* **Periksa bentuk `data` di batas itu.** Skema paket menjamin `Barang` bertipe string
+  kalau buffer-nya berhasil didekode, tapi berhasil didekode bukan berarti masuk akal.
+* **Server tidak menyuruh client.** Arah itu adalah state di channel, bukan perintah. Server
+  tidak bisa memverifikasi client menurut, jadi perintah ke arah sana cuma saran.
 
 ---
 
 ## `Bridge:Destroy(): ()`
 
-Merobohkan Bridge: melepas gerbang, mengosongkan channel dan handler, membersihkan semua
-koneksi.
+Mengosongkan channel dan handler, dan membereskan semua koneksi.
 
-Kamu hampir tidak akan pernah memanggil ini. Framework tidak memanggilnya dari `Unrest:Stop`.
-Setiap metode lain melempar error setelah Bridge dihancurkan.
-
----
-
-## Yang **tidak** ada di sini, dan kenapa
-
-Ada beberapa metode di objek Bridge yang sengaja **tidak** ada di tipe `Bridge`:
-`AttachGateway`, `Execute`, `Receive`, `Snapshot`, `UseTransport`, `StartNetworking`,
-`TransportProvider`.
-
-Semuanya hidup di `NetTypes.BridgeSeam` — permukaan yang di-cast oleh gerbang, bukan oleh
-kode game. Alasannya paling jelas pada `Execute`: dia menjalankan handler **tanpa** validasi,
-tanpa batas laju, tanpa otorisasi. Menaruhnya di `Types.Bridge` berarti membuatnya bisa
-dijangkau apa pun yang baru saja menerima masukan dari client.
-
-Satu-satunya benda di kode ini yang bisa menjangkau handler tanpa penjagaan adalah objek yang
-baru saja selesai menjaganya.
+Kamu hampir tidak akan pernah memanggil ini, dan framework tidak memanggilnya dari
+`Unrest:Stop`. Setiap metode lain melempar error setelah Bridge dihancurkan.

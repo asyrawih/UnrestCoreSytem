@@ -166,8 +166,15 @@ Tiga kebiasaan yang membuat angkanya berarti:
 
 | Berkas | Mengukur | Sengaja TIDAK mengukur |
 | --- | --- | --- |
+| `bench/TableFill.bench.luau` | **Jalankan ini duluan.** Mengisi tabel yang sudah dialokasikan (`table.create`) melawan tabel kosong. Jawabannya sudah diketahui — `table.create` menang, dan bedanya ada di label `Create`, bukan `Fill`. | Apa pun tentang framework. Ini uji asap: kalau angkanya keluar, plugin-nya terpasang dan penemuan `.bench` jalan, jadi masalah pada bench lain adalah masalah bench itu sendiri. |
 | `bench/Cleanup.bench.luau` | Maid lama (berbasis closure) melawan scope Scythe, pada tiga bentuk yang benar-benar dipakai framework: `add 8, destroy` (satu elemen diadopsi), `add 1, destroy` (satu binding), `add 8, clean, add 8, destroy` (rewire). | Apa pun yang menyentuh API Instance. Disposable-nya `function() end` polos, jadi yang terukur wadahnya, bukan Roblox. Closure-nya juga dibuat di `ParameterGenerator`, di luar timer. |
 | `bench/Query.bench.luau` | Jalur panas `Selector` yang read-only: `roleOf`, `ancestorChain`, `attributeOf`, `groupOf`, dan `matches` untuk dua descriptor. | `Unrest:Query` itu sendiri. Query mendaftarkan koneksi CollectionService yang hidup lebih lama dari panggilannya; menjalankannya ribuan kali di dalam loop timer akan meninggalkan ribuan langganan hidup dan meracuni sisa sesi Studio-mu. |
+
+`TableFill.bench` juga berkas yang paling enak dijadikan contoh saat menulis bench baru, dan
+sengaja memakai ejaan khas Scriptbench (`Name`, `Parameter`, `lib.profilebegin`) supaya
+terbukti keduanya jalan. Ejaan yang portabel — yang juga dimengerti Benchmarker-nya
+boatbomber — adalah `ParameterGenerator` dan `Profiler.Begin` / `Profiler.End`; itu yang
+dipakai dua berkas lainnya.
 
 `bench/Baseline/Maid.luau` adalah Maid lama yang dipulihkan dari riwayat git apa adanya
 (commit `80a6e97`, induk dari commit yang menggantinya), bukan tulisan ulang. Perbandingan

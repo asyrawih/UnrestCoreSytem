@@ -1,306 +1,181 @@
-# ModuleScript `Game`
+# Modul Bersama Game
 
-`ReplicatedStorage.Game` adalah tempat game-mu tinggal. Ini satu-satunya berkas yang
-**wajib** kamu isi sebelum framework berguna.
+Halaman ini menjawab satu pertanyaan: **apa yang wajib aku deklarasikan di modul yang dibaca
+client dan server sekaligus?**
 
-Di disk letaknya `src/game/`.
+Jawaban singkatnya, dan halaman ini pendek justru karena itu:
+
+> **Framework tidak menuntut apa pun.** Satu-satunya alasan kamu masih butuh modul bersama
+> adalah karena *game-mu* mengirim pesan sendiri antar mesin, dan kedua sisi harus sepakat
+> soal bentuk pesannya.
+
+Kalau game-mu tidak pernah menyeberangi mesin, kamu tidak butuh modul bersama sama sekali.
 
 ---
 
-## 1. Apa ini, dan kenapa ada
+## 1. Kenapa halaman ini jadi sependek ini
 
-Framework ini tidak tahu apa-apa soal game-mu. Itu bukan kekurangan, itu keseluruhan
-rancangannya. Framework tidak tahu perintahmu bernama apa, channel-mu ada berapa, atau tombol
-"putar" itu artinya apa. Dia hanya tahu cara **membawa** sebuah perintah dan cara
-**menerapkan** kebijakan atasnya.
+Rancangan lama menuntut satu modul bersama yang mendeklarasikan setiap perintah, setiap
+channel, kebijakan siapa boleh memanggil apa, plus format kabelnya. Itu ditolak, dan alasannya
+lugas: **terlalu banyak yang harus ditulis pemakai sebelum satu tombol pun jalan**, dan
+sebagian besar yang ditulis itu cuma mengulang hal yang sudah kelihatan di kodenya sendiri.
 
-Jadi harus ada satu tempat yang menyimpan pengetahuan itu. Tempatnya di sini.
+Yang tersisa sekarang adalah lapisan yang memang tidak bisa dihindari: kalau dua mesin
+bertukar pesan, keduanya harus membaca skema yang sama. Sisanya hilang.
 
-`ReplicatedStorage.Game` ada **di sebelah** `ReplicatedStorage.Unrest`, bukan di dalamnya:
+Framework ini murni abstraksi UI. Dia tidak membawa jaringan, tidak punya registry perintah,
+dan tidak memvalidasi payload. `Bridge` adalah bus lokal — lihat [API Bridge](API-BRIDGE.md).
+Perintah dan channel adalah string biasa yang framework antar apa adanya.
+
+---
+
+## 2. Satu-satunya modul bersama: `GameNet`
+
+Di disk letaknya `src/game-net/`. Di DataModel dia muncul **di sebelah** framework, bukan di
+dalamnya:
 
 ```
 ReplicatedStorage
 ├── Unrest        ← framework
-└── Game          ← punyamu
+├── GameNet       ← punyamu, dibaca dua realm
+└── Packages      ← dependensi Wally
 ```
 
-Dan arah ketergantungannya cuma satu:
+Isinya, seluruhnya, cuma format kabel game ini:
+
+```luau
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ByteNetMax = require(ReplicatedStorage.Packages.ByteNet)
+
+return ByteNetMax.defineNamespace("Game", function()
+    return {
+        packets = {
+            Beli = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({ Barang = ByteNetMax.string }),
+            }),
+            Koin = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({ Nilai = ByteNetMax.uint32 }),
+            }),
+            Pesan = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({ Teks = ByteNetMax.string }),
+            }),
+        },
+    }
+end)
+```
+
+Tiga hal yang menjelaskan bentuk itu:
+
+* **Dia harus bersama.** ByteNet memberi id pada paket berdasarkan urutan definisinya, jadi
+  kedua realm wajib membaca berkas yang sama supaya id-nya sepakat. Ini satu-satunya alasan
+  modul ini dibaca dua sisi.
+* **Satu paket per jenis pesan**, bukan satu amplop serbaguna. Amplop serbaguna butuh
+  `ByteNet.unknown`, yang tidak memak apa-apa dan cuma menitipkan nilainya di samping buffer
+  seperti argumen remote biasa. Harganya jujur: channel baru berarti paket baru di sini plus
+  satu pemetaan di client.
+* **Tidak ada satu pun nama framework di berkas ini.** Tidak ada `Unrest`, tidak ada
+  `Bridge`. Modul ini tidak tahu framework itu ada, dan framework tidak tahu modul ini ada.
+
+Arah ketergantungannya tetap satu arah, seperti dulu:
 
 > **Kode game meng-`require` framework. Framework tidak pernah meng-`require` kode game.**
-
-Tidak ada satu berkas pun di `src/shared` atau `src/server` yang boleh menyebut
-`ReplicatedStorage.Game`. Kalau kamu pernah tergoda menulisnya, itu tandanya sesuatu yang
-seharusnya ada di `src/game` terlanjur bocor ke framework.
-
-Isinya adalah hal-hal yang **client dan server harus sepakati**, tapi framework tidak boleh
-memilikinya:
-
-* nama channel dan perintah game ini;
-* kontrak untuk masing-masing, didaftarkan ke registry framework;
-* bundel preset yang dipanggil desainer dari Studio lewat nama.
+> Tidak ada satu berkas pun di `src/shared` yang boleh menyebut `ReplicatedStorage.GameNet`.
 
 ---
 
-## 2. Meng-`require`-nya **adalah** mendeklarasikannya
+## 3. Yang **tidak** perlu kamu deklarasikan di mana pun
 
-Ini bagian yang paling penting dan paling mudah salah dibaca.
+Ini bagian yang paling berguna kalau kamu pernah membaca versi lama halaman ini.
 
-```luau
-require(ReplicatedStorage.Game)
-```
-
-Baris itu bukan impor yang nilainya ingin dipakai. Baris itu **pekerjaannya**. Saat modul ini
-di-`require`, dia meng-`require` `Contracts` dan `Presets` di dalamnya, dan kedua modul itu
-memanggil `Contracts:Declare` dan `Presets.Register` sebagai efek samping.
-
-Setelah itu barulah dia mengembalikan `Channels` dan `Commands`.
-
-Susunan itu disengaja: **satu-satunya cara mendapatkan sebuah nama adalah lewat modul yang
-sudah mendeklarasikannya.** Jadi "memakai perintah yang tidak pernah dideklarasikan" bukan
-bentuk yang bisa ada di kode ini.
-
-**Kedua bootstrap harus meng-`require`-nya.** Roblox menyimpan cache ModuleScript per realm,
-jadi server punya salinan registry-nya sendiri dan client punya salinannya sendiri. Keduanya
-harus diberi tahu. Itu bukan duplikasi, itu memang tujuannya.
-
-Kalau salah satu lupa, framework **gagal tertutup**: perintah yang tidak dideklarasikan
-ditolak penjaga di client, lalu ditolak lagi oleh gerbang di server. Yang kamu dapat adalah
-penolakan yang berisik, bukan pintu yang terbuka.
-
-Dan karena `Contracts:Declare` menolak nama yang sudah pernah dideklarasikan, `init.luau`
-inilah yang memastikan tidak ada yang mencoba mendeklarasikan dua kali.
-
----
-
-## 3. Isi minimalnya
-
-Ini pertanyaan yang paling sering ditanyakan: **apa yang minimal harus aku definisikan di
-sana?**
-
-Jawabannya: **satu berkas, `init.luau`, dan minimal satu kontrak.** Sisanya adalah kerapian.
-
-### Versi paling kecil yang tetap jalan
-
-Satu berkas, `src/game/init.luau`:
-
-```luau
---!strict
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
-
-local COMMANDS = table.freeze({
-    Greet = "Greet.Say",
-})
-
-Contracts:Declare({
-    Name = COMMANDS.Greet,
-    Realm = "Server",
-    AllowClient = true,
-    Payload = { Kind = "string", MaxLength = 32 },
-    Response = true,
-})
-
-return table.freeze({
-    Channels = table.freeze({}),
-    Commands = COMMANDS,
-})
-```
-
-Itu saja. `require(ReplicatedStorage.Game)` di kedua bootstrap sekarang berarti sesuatu, dan
-`Greet.Say` sudah bisa dipanggil client.
-
-Yang **tidak** wajib:
-
-* Channel — game yang hanya mengirim niat dan tidak menampilkan state tidak butuh satu pun.
-* Preset — itu kenyamanan untuk desainer, bukan syarat.
-* `Types.luau` — hanya berguna kalau kamu memakai type checker strict.
-* `Transport.luau` — tanpa itu framework memakai remote Roblox biasa, dan itu baik-baik saja.
-
-### Aturan minimalnya, dalam satu tabel
-
-| Kalau kamu mau... | Kamu wajib punya |
+| Dulu ditulis di modul bersama | Sekarang |
 | --- | --- |
-| perintah apa pun berjalan | satu `Contracts:Declare` |
-| perintah itu bisa dipanggil client | `AllowClient = true` di kontraknya |
-| `Bridge:Invoke` boleh dipakai untuk perintah itu | `Response = true` di kontraknya |
-| sebuah channel bisa direplikasi ke client | `Contracts:DeclareChannel` dengan `Visibility` selain `Server` |
-| atribut `UnrestPreset` bisa dipakai | satu `Presets.Register` |
+| Daftar nama perintah | Tidak ada. String biasa, dieja di tempat dia dipakai. |
+| Daftar nama channel | Tidak ada. Sama, string biasa. |
+| Izin "perintah ini boleh dipanggil client" | Tidak ada konsepnya. `Bridge` tidak menyeberangi mesin, jadi tidak ada yang perlu diizinkan. |
+| Skema payload dan batas laju per perintah | Kamu sendiri yang memeriksa, di tempat paket diterima. Lihat `src/game-server/init.server.luau`. |
+| Berkas tipe bersama untuk sistem-sistemmu | Tiap sistem mengekspor tipenya dari modulnya sendiri (`export type Dompet = typeof(Dompet)` di `Dompet.luau`). |
+| Pilihan pustaka jaringan | Tidak ada tempatnya lagi di framework. Kamu memanggil pustakamu langsung. |
 
 ---
 
-## 4. Bentuk lengkapnya, satu berkas per pekerjaan
+## 4. Lalu nama perintah dan channel tinggal di mana?
 
-Begitu game-mu tumbuh, satu berkas jadi sesak. Bentuk yang dipakai repo ini memecahnya jadi
-enam, satu per pekerjaan:
+**Di sebelah kode yang menanganinya.** Itu aturannya, dan framework memang tidak boleh
+mengeja satu pun dari nama-nama itu.
 
-| Berkas | Isinya |
-| --- | --- |
-| `init.luau` | Pintu depan. Meng-`require`-nya mendeklarasikan semuanya, lalu mengembalikan `Channels` dan `Commands`. Kedua bootstrap meng-`require` ini dan tidak yang lain. |
-| `Names.luau` | Nama channel dan perintah, dieja **sekali**. |
-| `Contracts.luau` | `Contracts:Declare` / `:DeclareChannel` untuk setiap nama. Di-`require` demi efek sampingnya. |
-| `Presets.luau` | `Presets.Register` untuk setiap bundel atribut. Di-`require` demi efek sampingnya. |
-| `Types.luau` | Bentuk sistem-sistem game ini, untuk type checker. |
-| `Packets.luau` + `Transport.luau` | Format kabel milik game ini, kalau kamu mengganti transport. |
+| Nama | Diketik di mana saja | Jenisnya |
+| --- | --- | --- |
+| `"Toko.Beli"` | `src/game-server/init.server.luau` (`Bridge:Dispatch`) dan `src/game-server/Systems/Toko.luau` (`Bridge:Handle`) | perintah, server saja |
+| `"Koin"` | `src/game-client/Shop.luau` (`Bridge:Publish`) dan atribut `UnrestChannel` di Studio | channel, client saja |
+| `"Pesan"` | sama seperti `"Koin"` | channel, client saja |
 
-### `Names.luau` — nama dieja sekali
+Perhatikan bahwa tidak satu pun dari nama itu menyeberangi mesin. Yang menyeberang adalah
+paket. Nama channel diputuskan **di sisi penerima**: `Toko` mengirim paket `Koin` tanpa pernah
+menyebut kata "channel", dan client yang memutuskan paket itu berarti channel `"Koin"`.
 
-```luau
---!strict
-return table.freeze({
-    Channels = table.freeze({
-        NowPlaying = "Music.NowPlaying",
-        MusicVolume = "Music.Volume",
-    }),
-    Commands = table.freeze({
-        MusicPlay = "Music.Play",
-        MusicStop = "Music.Stop",
-    }),
-})
-```
+Harga dari kebebasan ini harus dikatakan terang-terangan:
 
-Kenapa repot-repot? Supaya salah ketik menjadi **indeks nil di baris pemanggilnya**, bukan
-string yang diam-diam tidak cocok dengan apa pun.
+> **Nama yang salah ketik itu diam.** `Bridge:Dispatch` ke nama yang tidak ada handler-nya
+> adalah no-op tanpa galat, dan `UnrestChannel` yang tidak cocok dengan `Publish` mana pun
+> membuat label tidak pernah terisi. Tidak ada yang menangkapnya untukmu.
 
-Dan perlu ditegaskan: **menambah baris di sini tidak memberi apa-apa.** Ini pembukuan.
-Menambah baris di `Contracts.luau` adalah keputusan.
+Versi lama pernah menerbitkan `"koin"` huruf kecil sementara Studio menulis `Koin`, dan saldo
+pembuka tidak pernah tergambar sekali pun tanpa satu baris merah di Output. Kalau sebuah nama
+dipakai di lebih dari satu berkas, angkat jadi konstanta lokal di berkas yang memilikinya,
+lalu impor dari sana.
 
-### `Contracts.luau` — kebijakannya, sebagai data
+---
 
-```luau
---!strict
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+## 5. Preset — satu-satunya deklarasi opsional yang tersisa
 
-local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
-local Names = require(script.Parent.Names)
-
-Contracts:Declare({
-    Name = Names.Commands.MusicPlay,
-    Realm = "Server",
-    AllowClient = true,
-    Payload = { Kind = "string", MaxLength = 64, Pattern = "[%w_%-%.]+" },
-    RateLimit = { Count = 4, Window = 1 },
-    Response = true,
-    Description = "Putar lagu terdaftar berdasarkan nama.",
-})
-
-Contracts:DeclareChannel({
-    Name = Names.Channels.NowPlaying,
-    Visibility = "Public",
-    Value = { Kind = "string", Optional = true, MaxLength = 64 },
-    Description = "Lagu yang sedang didengar semua orang, atau nil.",
-})
-
-return table.freeze({})
-```
-
-Aturannya satu, dan sisanya konsekuensi:
-
-> **Sebuah perintah tidak bisa dijangkau client kecuali kontraknya menulis
-> `AllowClient = true`.**
-
-Bukan "kecuali ditandai privat". Bukan "kecuali ada pengecekan yang ditambahkan".
-**Ketiadaan izin itulah penolakannya.** Perintah tanpa baris itu tetap bisa dipakai kode
-server sebebas-bebasnya; client yang mengirim namanya cuma dapat `NotClientCallable` dan
-tidak belajar apa pun.
-
-Channel mengikuti bentuk yang sama lewat `Visibility`, yang bawaannya `Server`. Channel yang
-tidak dideklarasikan tidak direplikasi. Dia tidak bisa bocor karena kelalaian.
-
-> **Catatan tentang `Authorize`.** Modul ini tinggal di ReplicatedStorage, jadi client bisa
-> membaca fungsi-fungsinya. **Jangan pernah menutup rahasia di sini.** Fungsi itu boleh
-> membaca state game (`player.Character`, atribut milik server) karena dia hanya *dijalankan*
-> di server — salinan yang dipegang client mati, tidak pernah dieksekusi.
-
-Referensi lengkap setiap field ada di [API Contracts](API-CONTRACTS.md).
-
-### `Presets.luau` — bundel atribut
+`UnrestPreset` adalah satu-satunya atribut yang isinya harus didaftarkan lebih dulu di kode.
+Framework tidak membawa satu preset pun, karena preset menyebut nama channel atau perintah,
+dan nama itu milik game.
 
 ```luau
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Constants = require(ReplicatedStorage.Unrest.Constants)
-local Names = require(script.Parent.Names)
 local Presets = require(ReplicatedStorage.Unrest.Presets)
 
 local ATTRIBUTES = Constants.Attributes
 
-Presets.Register("MusicToggle", {
-    [ATTRIBUTES.Command] = Names.Commands.MusicPlay,
-    [ATTRIBUTES.Payload] = "Lobby",
-    [ATTRIBUTES.Channel] = Names.Channels.NowPlaying,
+Presets.Register("LabelKoin", {
+    [ATTRIBUTES.Channel] = "Koin",
     [ATTRIBUTES.Bind] = "Text",
-    [ATTRIBUTES.Format] = "Musik: {value}",
+    [ATTRIBUTES.Format] = "Koin: {value}",
 })
-
-return table.freeze({})
 ```
 
-Desainer cukup menulis satu atribut, `UnrestPreset = "MusicToggle"`, dan `ElementManager`
-memekarkannya jadi lima.
+Dua hal soal tempat menaruhnya:
 
-Gunanya bukan sekadar ringkas. Gunanya: **"apa itu tombol musik" diputuskan sekali, di kode,
-yang bisa ditelaah**, bukan diketik ulang di setiap tombol lalu perlahan melenceng.
+* **Ini bukan modul bersama.** Preset hanya berarti di realm yang mengadopsi UI, dan adopsi
+  cuma terjadi di client. Taruh di `src/game-client/`, dan jalankan sebelum
+  `Unrest:Start()`.
+* **Kuncinya wajib nama atribut `Unrest*`.** `Presets.Register` melempar error untuk kunci
+  lain, jadi pakai `Constants.Attributes` dan biarkan salah ketik jadi indeks nil.
 
-**Framework tidak membawa satu preset pun.** Tabelnya kosong sejak awal, dan itu disengaja:
-preset menyebut nama perintah atau channel, dan nama itu milik game.
-
-Preset adalah singkatan, bukan hak istimewa. Preset yang menyebut perintah yang tidak
-dideklarasikan tetap ditolak saat dispatch.
-
-### `Types.luau` — bentuk sistemmu
-
-Kalau kamu memakai `--!strict`, deklarasikan tipe setiap sistem dari modulnya sendiri:
-
-```luau
---!strict
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-local UnrestTypes = require(ReplicatedStorage.Unrest.Types)
-
-type Signal<T...> = UnrestTypes.Signal<T...>
-type System = UnrestTypes.System
-
-export type MusicSystem = System & {
-    NowPlayingChanged: Signal<string?>,
-    Play: (self: MusicSystem, name: string) -> boolean,
-    Stop: (self: MusicSystem) -> (),
-}
-```
-
-Perhatikan arahnya: berkas ini mengimpor `System` dan `Signal` **dari framework**. Framework
-tidak pernah mengimpor apa pun dari sini. Framework hanya membaca `Types.System`; apa yang
-kamu tambahkan di atasnya adalah urusanmu.
-
-### `Transport.luau` — kalau kamu mengganti kabelnya
-
-`init.luau` sengaja **tidak** meng-`require` `Transport.luau`. Mount `Packages` bersifat
-opsional, jadi sebuah `require` di sini akan membuat ByteNet yang hilang merusak seluruh
-perintah di game, bukan cuma transport yang membutuhkannya.
-
-Memasangnya adalah satu baris eksplisit di bootstrap:
-
-```luau
-local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:UseTransport(require(ReplicatedStorage.Game.Transport))
-```
-
-Selengkapnya di [API Transport](API-TRANSPORT.md).
+Game contoh di repo ini tidak mendaftarkan satu preset pun — atributnya diketik langsung di
+Studio. Itu sah. Preset adalah kenyamanan supaya "apa itu label koin" diputuskan sekali di
+kode yang bisa ditelaah, bukan syarat. Selengkapnya di [API Presets](API-PRESETS.md).
 
 ---
 
-## 5. Daftar periksa
+## 6. Daftar periksa
 
-Sebelum kamu tekan Play, pastikan semuanya benar:
+- [ ] Ada `src/game-net/init.luau` **kalau dan hanya kalau** game-mu mengirim pesan antar
+      mesin. Kalau tidak, hapus saja.
+- [ ] Kedua realm meng-`require` berkas paket yang sama, supaya id paketnya sepakat.
+- [ ] Client memakai `ReplicatedStorage:WaitForChild("GameNet")`, karena replikasi belum
+      tentu selesai saat script client jalan.
+- [ ] Setiap paket yang masuk diperiksa bentuknya di tempat dia diterima — tidak ada lapisan
+      lain yang melakukannya.
+- [ ] Identitas pemain diambil dari argumen kedua `listen`, **tidak pernah** dari isi paket.
+- [ ] Nama channel yang diterbitkan `Bridge:Publish` sama persis, huruf demi huruf, dengan
+      `UnrestChannel` yang diketik di Studio.
+- [ ] Tidak ada satu pun berkas di `src/shared` yang menyebut `ReplicatedStorage.GameNet`
+      atau `ServerScriptService.Game`.
 
-- [ ] `src/game/init.luau` ada, dan meng-`require` modul yang mendeklarasikan.
-- [ ] Setiap perintah yang kamu pakai punya `Contracts:Declare`.
-- [ ] Perintah yang dipanggil dari client punya `AllowClient = true`.
-- [ ] Perintah yang dipanggil lewat `Bridge:Invoke` punya `Response = true`.
-- [ ] Channel yang harus dilihat client punya `Visibility = "Public"` atau `"Player"`.
-- [ ] `src/game-server/init.server.luau` meng-`require(ReplicatedStorage.Game)` **sebelum**
-      `Unrest:Start()`.
-- [ ] `src/game-client/init.client.luau` juga meng-`require(ReplicatedStorage.Game)`.
-- [ ] Tidak ada satu pun berkas di `src/shared` atau `src/server` yang menyebut
-      `ReplicatedStorage.Game`.
+Langkah demi langkahnya, dari folder kosong sampai tombol pertama, ada di
+[Panduan Memulai](GETTING-STARTED.md).

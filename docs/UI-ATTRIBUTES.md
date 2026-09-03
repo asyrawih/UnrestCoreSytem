@@ -114,7 +114,7 @@ print(Elements.describe(element))
 Preset didaftarkan oleh game, bukan oleh framework:
 
 ```luau
--- src/game/Presets.luau
+-- di kode game-mu, sebelum layarnya diadopsi
 Presets.Register("MusicToggle", {
     [ATTRIBUTES.Command] = "Music.Play",
     [ATTRIBUTES.Payload] = "Lobby",
@@ -135,9 +135,9 @@ Satu atribut, bukan lima. Gunanya bukan keringkasan: gunanya adalah **"apa itu t
 diputuskan sekali, di kode yang bisa ditelaah**, bukan diketik ulang di setiap tombol lalu
 perlahan melenceng.
 
-Preset adalah singkatan, bukan hak istimewa. Preset yang menyebut perintah yang tidak
-dideklarasikan kontraknya tetap ditolak saat dispatch, persis seperti `UnrestCommand` yang
-diketik tangan.
+Preset adalah singkatan, bukan hak istimewa. Preset yang menyebut perintah yang tidak ada
+handler-nya berakhir persis seperti `UnrestCommand` yang diketik tangan: dispatch-nya jalan dan
+tidak ada yang menjawabnya.
 
 Menyebut preset yang tidak ada memberi peringatan dan **tetap mengadopsi** elemennya, dengan
 atributnya sendiri saja:
@@ -226,16 +226,16 @@ Keduanya sama-sama tidak pernah membaca service atau DataModel.
 
 ## 7. Atribut tidak memberi hak istimewa
 
-`UnrestCommand` lewat **`Bridge:Dispatch` yang sama persis** dengan Luau tulisan tangan.
-Kontrak perintahnya tetap yang memutuskan apakah client boleh memintanya sama sekali, server
-tetap memvalidasi payload-nya, dan server tetap menerapkan batas lajunya.
+`UnrestCommand` lewat **`Bridge:Dispatch` yang sama persis** dengan Luau tulisan tangan, dan
+sampai ke handler yang sama. Atribut bukan mekanisme kedua: dari seberang Bridge, layar yang
+dirakit di Studio dan layar yang dirakit di kode tidak bisa dibedakan.
 
-Menambahkan atribut di Studio **tidak bisa** memperluas apa yang boleh diminta client, karena
-izinnya memang tidak pernah ada di dalam atribut.
+Bridge adalah bus di dalam satu mesin. Jadi atribut tidak memberi hak istimewa **apa pun**, dan
+pertanyaan keamanannya tidak muncul di lapisan ini: sebuah dispatch tidak menyeberang ke mana
+pun, dan siapa yang boleh meminta apa diputuskan oleh kode yang menangani perintahnya — kode
+game-mu, di luar framework.
 
 `UnrestCooldown` adalah **debounce sisi client dan tidak lebih**. Dia ada supaya klik ganda
 yang tidak sengaja tidak mengirim dua dispatch. Dia tinggal di memori client ini, siapa pun
-yang mau menghapusnya bisa, dan **dia bukan batas laju**. Batas yang sebenarnya adalah jatah
-per pemain per perintah yang diterapkan server saat permintaannya tiba.
-
-Lihat [Keamanan Remote](REMOTE-SECURITY.md).
+yang mau menghapusnya bisa, dan **dia bukan batas laju**. Kalau perintahnya berakhir jadi
+permintaan ke server, yang membatasinya harus kode yang menerima permintaan itu.

@@ -35,7 +35,7 @@ module.exports = {
             items: [
                 { type: "doc", id: "MENTAL-MODEL", label: "Model Mental" },
                 { type: "doc", id: "GETTING-STARTED", label: "Panduan Memulai" },
-                { type: "doc", id: "GAME-MODULE", label: "ModuleScript Game" },
+                { type: "doc", id: "GAME-MODULE", label: "Modul Bersama Game" },
                 { type: "doc", id: "ARCHITECTURE", label: "Arsitektur" },
             ],
         },
@@ -58,9 +58,7 @@ module.exports = {
                 { type: "doc", id: "API-ELEMENTS", label: "Elements & Query" },
                 { type: "doc", id: "API-WIDGETS", label: "Widgets" },
                 { type: "doc", id: "API-ADAPTERS", label: "Adapters" },
-                { type: "doc", id: "API-CONTRACTS", label: "Contracts" },
                 { type: "doc", id: "API-PRESETS", label: "Presets" },
-                { type: "doc", id: "API-TRANSPORT", label: "Transport" },
             ],
         },
         {
@@ -90,11 +88,10 @@ module.exports = {
                 type: "generated-index",
                 title: "Operasional",
                 description:
-                    "Keamanan, cara mengukur biayanya, dan apa yang harus dilakukan saat ada yang salah.",
+                    "Cara mengukur biayanya, dan apa yang harus dilakukan saat ada yang salah.",
                 slug: "/category/operations",
             },
             items: [
-                { type: "doc", id: "REMOTE-SECURITY", label: "Keamanan Remote" },
                 { type: "doc", id: "BENCHMARKING", label: "Benchmark & Heap" },
                 { type: "doc", id: "TROUBLESHOOTING", label: "Pemecahan Masalah" },
             ],
@@ -112,7 +109,6 @@ module.exports = {
             },
             items: [
                 { type: "doc", id: "PROPOSAL-CONTROLS", label: "Controls (v2)" },
-                { type: "doc", id: "PROPOSAL-TRANSPORT", label: "Transport" },
             ],
         },
     ],

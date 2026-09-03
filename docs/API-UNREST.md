@@ -140,48 +140,34 @@ if not unrest:IsStarted() then
 end
 ```
 
-### `Unrest:OpenGateway(): ()`
+### Tidak ada metode jaringan, dan itu disengaja
 
-**Server saja.** Membangun gerbang otoritatif dan membuat objek remote muncul di DataModel.
-Sebelum baris ini jalan, tidak ada jalan bagi client untuk mengirim apa pun.
+Kalau kamu mencari `OpenGateway`, `UseTransport`, atau `Invoke` — semuanya sudah tidak ada.
+Framework ini **bukan lapisan jaringan**. Bridge-nya bus lokal: `Dispatch` di client hanya
+menjangkau handler di client itu juga.
 
-Panggil ini sebagai **baris terakhir** bootstrap server-mu:
-
-```luau
-require(ReplicatedStorage.Game)
-local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:Register(require(script.Systems.Greeter))
-local unrest = Unrest:Start()
-unrest:OpenGateway()          -- terakhir, selalu
-```
-
-**Kenapa terakhir?** Karena `:Start()` yang menjalankan `Init` setiap sistem, dan di situlah
-`Bridge:Handle` dipanggil. Membuka gerbang setelahnya berarti permintaan paling awal yang
-bisa dikirim client pun pasti menemukan seluruh handler sudah terpasang. Tidak ada jendela
-waktu di mana pintunya terbuka tapi ruangannya kosong.
-
-> Gerbang server tinggal di `ServerScriptService`, jadi dia tidak pernah direplikasi ke mesin
-> yang diaturnya. Itu bukan kerapian, itu keamanannya. Lihat
-> [Keamanan Remote](REMOTE-SECURITY.md).
-
-### `Unrest:UseTransport(provider: TransportProvider): Unrest`
-
-Mengganti transport bawaan (remote Roblox) untuk **setiap** perintah dan **setiap** channel.
-Mengembalikan singleton, jadi bisa dirantai.
+Remote adalah urusan game-mu. Di repo ini, game contohnya memakai ByteNet di
+`src/game-net`, dan pola sambungannya cuma dua baris — server mendengarkan paket lalu
+`Dispatch`, client mendengarkan paket lalu `Publish`:
 
 ```luau
-local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:UseTransport(require(ReplicatedStorage.Game.Transport))
-local unrest = Unrest:Start()
+-- server: paket masuk jadi niat
+GameNet.packets.Beli.listen(function(data, player: Player?)
+    if player == nil or typeof(data) ~= "table" or typeof(data.Barang) ~= "string" then
+        return
+    end
+    unrest.Bridge:Dispatch("Toko.Beli", { Player = player, Item = data.Barang })
+end)
+
+-- client: paket masuk jadi state yang bisa diikuti UI
+GameNet.packets.Koin.listen(function(data)
+    unrest.Bridge:Publish("Koin", data.Nilai)
+end)
 ```
 
-**Harus dipanggil di antara `require` dan `:Start()`.** Jendela itu nyata: setengah-client
-dipasang saat `require`, tapi transport di bawahnya baru dibangun pada `:Start()` atau pada
-dispatch pertama, mana yang lebih dulu. Memasangnya setelah itu **melempar error**, bukan
-diam-diam meninggalkan separuh trafik di kabel lama.
-
-Tidak ada pencampuran per-perintah. Satu transport membawa semuanya. Lihat
-[API Transport](API-TRANSPORT.md).
+**Identitas tidak pernah datang dari pesannya.** `player` di atas adalah argumen kedua yang
+diserahkan ByteNet, diteruskan apa adanya dari `OnServerEvent`, jadi Roblox yang mengisinya.
+Paket `Beli` sengaja tidak punya field pemain, dan memang tidak boleh punya.
 
 ---
 
@@ -253,21 +239,11 @@ yield.
 unrest:Dispatch("Music.Play", "Lobby")
 ```
 
-### `Unrest:Invoke(command: string, payload: any): InvokeResult`
+Perintah tanpa satu pun handler adalah **no-op yang diam**, bukan error. Layar sering dibangun
+sebelum kode di belakangnya, dan tombol yang belum melakukan apa-apa tidak seharusnya
+memuntahkan peringatan tiap kali diklik.
 
-Jalan pintas untuk `Unrest.Bridge:Invoke`. Kirim niat dan tunggu nilainya. **Yield.**
-Kontraknya harus menulis `Response = true`.
-
-```luau
-local result = unrest:Invoke("Music.Play", "Lobby")
-if result.Ok then
-    print("berhasil:", result.Value)
-else
-    print("ditolak:", result.Reason)
-end
-```
-
-Lihat [API Bridge](API-BRIDGE.md) untuk keduanya.
+Lihat [API Bridge](API-BRIDGE.md).
 
 ---
 
@@ -275,19 +251,31 @@ Lihat [API Bridge](API-BRIDGE.md) untuk keduanya.
 
 ```luau
 -- src/game-server/init.server.luau
-require(ReplicatedStorage.Game)                  -- 1. deklarasi kontrak dan preset
+local GameNet = require(ReplicatedStorage.GameNet)
 local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:Register(require(script.Systems.Greeter)) -- 2. daftarkan sistem
-local unrest = Unrest:Start()                    -- 3. Init lalu Start
-unrest:OpenGateway()                             -- 4. remote muncul
+
+Unrest:Register(require(script.Systems.Dompet))   -- 1. daftarkan sistem
+Unrest:Register(require(script.Systems.Toko))
+
+local unrest = Unrest:Start()                     -- 2. Init lalu Start setiap sistem
+
+GameNet.packets.Beli.listen(function(data, player: Player?)  -- 3. baru dengarkan paket
+    ...
+end)
 ```
 
 ```luau
 -- src/game-client/init.client.luau
-require(ReplicatedStorage.Game)                  -- 1. kontrak dan preset, sama persis
 local Unrest = require(ReplicatedStorage.Unrest)
-local unrest = Unrest:Start()                    -- 2. jaringan hidup, UI diadopsi
+
+local unrest = Unrest:Start()                     -- 1. UI bertag diadopsi
+require(script.Shop)(unrest)                      -- 2. muat fiturnya
 ```
 
-Kalau kamu memakai transport sendiri, sisipkan `Unrest:UseTransport(...)` tepat sebelum
-`:Start()` di **kedua** berkas.
+**Urutannya membawa makna.** Di server, `Start` yang menjalankan `Init` setiap sistem, dan di
+situlah `Bridge:Handle` dipanggil. Mendengarkan paket **sesudahnya** berarti permintaan
+paling awal yang bisa dikirim pemain pun pasti menemukan handler-nya sudah terpasang; kalau
+dibalik, ada jendela waktu di mana pesan datang tapi tidak ada yang bisa menjawabnya.
+
+Di client urutannya lebih longgar: setiap fitur mengikat lewat `Unrest:Query`, dan itu
+ikatan hidup — elemen yang ditandai sepuluh menit lagi tetap terikat sepuluh menit lagi.

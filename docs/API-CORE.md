@@ -72,21 +72,30 @@ return Greeter
 ### Mengekspor tipenya
 
 Framework **tidak membawa tipe sistem game-mu**, dan itu disengaja: framework tidak
-seharusnya tahu sistem sebuah game bernama apa. Jadi ekspor tipenya dari modul sistem itu
-sendiri, atau dari `src/game/Types.luau`:
+seharusnya tahu sistem sebuah game bernama apa. Jadi ekspor tipenya **dari modul sistem itu
+sendiri**, dan `typeof` sudah cukup — tidak perlu menuliskan bentuknya dua kali:
 
 ```luau
-export type MusicSystem = UnrestTypes.System & {
-    NowPlayingChanged: UnrestTypes.Signal<string?>,
-    Play: (self: MusicSystem, name: string) -> boolean,
-    Stop: (self: MusicSystem) -> (),
+-- src/game-server/Systems/Dompet.luau
+local Dompet = {
+    Name = "Dompet",
+    Dependencies = {} :: { string },
 }
+
+export type Dompet = typeof(Dompet)
+
+function Dompet:Balance(player: Player): number
+    ...
+end
 ```
 
-Lalu di tempat pemakaian:
+Lalu di tempat pemakaian, `require` modulnya untuk tipenya dan `Get` untuk nilainya:
 
 ```luau
-local music = unrest:Get("MusicSystem") :: GameTypes.MusicSystem
+local DompetModule = require(ServerScriptService.Game.Systems.Dompet)
+
+local dompet = unrest:Get("Dompet") :: DompetModule.Dompet
+print(dompet:Balance(player))
 ```
 
 ---

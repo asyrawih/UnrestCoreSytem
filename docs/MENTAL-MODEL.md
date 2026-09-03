@@ -34,8 +34,9 @@ dan seluruh rancangan berdiri di atasnya.
 mendapat nilai terakhir. Itulah kenapa urutan tidak penting: label yang baru ditandai tiga puluh
 detik setelah lagu mulai tetap menampilkan lagu yang benar di frame pertamanya.
 
-**Dispatch** membawa niat masuk. Setiap dispatch melewati kontrak yang memutuskan apakah client
-boleh memintanya sama sekali. Tombol tidak punya kuasa; kontraknya yang punya.
+**Dispatch** membawa niat masuk. Dia kirim-dan-lupakan, tidak pernah yield, dan tidak pernah
+meninggalkan mesin ini. Perintah yang tidak ada handler-nya adalah no-op yang diam, bukan galat:
+Bridge tidak tahu apa arti sebuah nama, dia cuma tahu siapa yang mendengarkannya.
 
 ```
   System  ──Publish──▶  Bridge  ──▶  Element di Studio
@@ -54,7 +55,7 @@ Framework hanya menjawab empat pertanyaan. Masing-masing **harus** dijawab di sa
 | Instance ini dikelola atau tidak? | predikat tag di `Selector` |
 | Kelas ini bisa apa? | registry adapter |
 | Konfigurasi elemen ini apa? | resolusi atribut: milik sendiri, lalu preset, lalu warisan |
-| Client boleh minta ini? | kontrak perintah |
+| Sampai mana sebuah tag menaungi, dan kapan itu berubah? | pembukuan cascade di `Adapters/Cascade.luau` |
 
 **Setiap bug arsitektural serius di repo ini lahir dari satu pertanyaan yang dijawab di dua
 tempat.** Sudah terjadi tiga kali: grup yang diwarisi, tag yang menurun, dan preset yang
@@ -71,11 +72,13 @@ pertanyaan itu"**. Kalau iya, jangan.
   digambar, gambar di Studio.
 - **Bukan wadah state.** Channel itu papan pengumuman, bukan database. Yang memiliki state
   adalah System.
-- **Bukan library jaringan.** Dia memiliki kebijakan siapa boleh memanggil apa; cara byte
-  bergerak itu urusan transport dan bisa diganti.
+- **Bukan library jaringan.** Dia tidak punya remote, tidak punya kontrak, dan tidak punya
+  argumen `Player` di mana pun. Bridge adalah bus di dalam satu mesin. Kalau game-mu perlu
+  bicara antar mesin, remote itu milik game-mu, di luar framework, dan disambungkan ke Bridge
+  dengan satu `Publish` atau satu `Dispatch`.
 - **Bukan game-mu.** Ini yang paling gampang bocor, dan dulu memang pernah bocor: nama-nama
   Music dan Dance sempat hidup di dalam `src/shared`. Sekarang sudah tidak. Semuanya pindah ke
-  `src/game`, dan framework tidak lagi tahu apa-apa soal game mana pun.
+  sisi game, dan framework tidak lagi tahu apa-apa soal game mana pun.
 
 ## Aturan searah
 
@@ -84,12 +87,12 @@ Empat kalimat, dan semuanya satu arah. Kalau ada yang berbalik, ada yang salah.
 1. Core tidak pernah menyentuh Instance.
 2. Element tidak pernah memanggil System.
 3. Semuanya menyeberang di Bridge.
-4. Kebijakan hidup di server dan tidak pernah direplikasi.
+4. Nama milik game mengalir ke framework, tidak pernah sebaliknya.
 
-Yang keempat bukan soal kerapian, melainkan keamanan. Gerbang yang memutuskan apa yang boleh
-diminta client tinggal di `ServerScriptService`, sehingga mesin yang diaturnya tidak bisa
-membacanya. Kontraknya sendiri boleh dibaca siapa saja: itu daftar nama pintu, dan gemboknya ada
-di server.
+Yang keempat gampang dilanggar tanpa sadar. `Constants.luau` memegang kosakata framework — tag,
+nama-nama atribut, himpunan yang bisa diwariskan — dan **tidak satu pun nama milik game**. Nama
+channel dan nama perintah ditulis di sebelah kode yang menanganinya; framework menerimanya
+sebagai string buram dan tidak pernah mengejanya sendiri.
 
 Dan ada aturan searah kelima, yang bentuknya sama: **kode game meng-`require` framework,
 framework tidak pernah meng-`require` kode game.**
@@ -106,14 +109,16 @@ alasan framework ini ada.
 
 Atribut adalah lapisan berikutnya dari gagasan yang sama: perakitan yang dinyatakan di Studio,
 oleh orang yang membangun layarnya, bukan di skrip oleh orang yang tidak melihatnya. Dan atribut
-**tidak memberi hak istimewa apa pun** — dia melewati gerbang yang sama dengan Luau tulisan
-tangan.
+**tidak memberi hak istimewa apa pun** — dia lewat `Bridge:Dispatch` yang sama persis dan
+sampai ke handler yang sama dengan Luau tulisan tangan. Dari seberang Bridge, layar yang dirakit
+di Studio dan layar yang dirakit di kode tidak bisa dibedakan.
 
 ## Kapan berhenti memakai atribut
 
 Atribut menyatakan satu perintah tetap. Begitu perilakunya bergantung pada keadaan sekarang,
 misalnya "putar kalau sedang diam, hentikan kalau sedang berbunyi", atribut sudah tidak cukup dan
-kamu turun ke `Unrest:Query`.
+kamu turun ke `Unrest:Query`. Kalau yang kamu rakit adalah kontrol berbagai bagian — slider,
+sakelar — mulai dari [Widgets](API-WIDGETS.md), bukan dari query tulisan tangan.
 
 Itu bukan kegagalan atribut, itu batas yang jelas. Dan karena peran sebuah elemen jatuh balik ke
 namanya, sering kali menamai elemen dengan benar sudah menggantikan atribut sepenuhnya.
@@ -123,12 +128,11 @@ namanya, sering kali menamai elemen dengan benar sudah menggantikan atribut sepe
 1. Dokumen ini.
 2. [Panduan Memulai](GETTING-STARTED.md) — langkah demi langkah, dari folder kosong sampai
    perintah pertama yang benar-benar terkirim.
-3. [ModuleScript `Game`](GAME-MODULE.md) — tempat kamu mendeklarasikan nama, kontrak, dan preset
-   milik game-mu.
+3. [Modul Bersama Game](GAME-MODULE.md) — tempat nama, preset, dan sistem milik game-mu
+   tinggal.
 4. [Arsitektur](ARCHITECTURE.md) — kontrak antar lapis, kalau kamu akan menyunting
    framework-nya.
 5. [Peta API](API-OVERVIEW.md) dan [Referensi UI](UI-BINDING.md) — referensi, dibuka saat
    dibutuhkan, bukan dibaca dari depan.
 
-Dua berkas `PROPOSAL-*` adalah rancangan. Jangan membaca keduanya sebagai deskripsi kode yang
-ada.
+Berkas `PROPOSAL-*` adalah rancangan. Jangan membacanya sebagai deskripsi kode yang ada.

@@ -8,25 +8,26 @@ instance dengan `Unrest` adalah seluruh pendaftarannya: dia diadopsi, adapter di
 `Unrest:Query`. Mencabut tagnya melepasnya. Tidak ada komponen, tidak ada `Mount`, dan tidak
 ada apa pun di `ReplicatedStorage` yang menggambar tombol.
 
-**Sebuah perintah tidak bisa dijangkau client kecuali kontraknya mengizinkan.** Penjaga di
-client dan gerbang di server membaca kontrak yang sama, dan server tidak pernah memercayai
-salinan milik client.
+**Bridge adalah bus lokal.** `Publish`/`Subscribe`/`Peek` ke satu arah, `Dispatch`/`Handle` ke
+arah sebaliknya, semuanya di dalam satu mesin. Tidak ada remote di framework ini, tidak ada
+argumen `Player` di mana pun, dan tidak ada lapisan jaringan sama sekali. Framework ini
+abstraksi UI, dan cuma itu.
 
 ```
    Core (Model)              Bridge (Controller)              View
   ┌──────────────┐          ┌───────────────────┐      ┌──────────────────┐
   │  System milik│          │ Publish/Subscribe │      │  UI dibuat di    │
-  │  game, hidup │  ──────► │ Dispatch/Invoke   │ ───► │  Studio, ditandai│
-  │  di server   │          │ Handle            │      │  `Unrest`        │
-  └──────────────┘          ├───────────────────┤      └──────────────────┘
-   otoritatif               │ Net: kontrak,     │              ▲
-                            │ validasi,         │              │
-                            │ batas laju        │      CollectionService
-                            └───────────────────┘       adopsi + adapter
+  │  game        │  ──────► │ Peek              │ ───► │  Studio, ditandai│
+  │              │          │ Dispatch/Handle   │      │  `Unrest`        │
+  └──────────────┘          └───────────────────┘      └──────────────────┘
+   pemilik state                bus lokal                       ▲
+                                                                │
+                                                        CollectionService
+                                                         adopsi + adapter
 ```
 
 Core tidak pernah menyentuh Instance. UI yang diadopsi tidak pernah memanggil sebuah System.
-Semuanya menyeberang di Bridge, dan Bridge bertanya ke kontrak apa yang boleh.
+Semuanya menyeberang di Bridge.
 
 ---
 
@@ -35,44 +36,52 @@ Semuanya menyeberang di Bridge, dan Bridge bertanya ke kontrak apa yang boleh.
 | Folder di disk | Muncul di DataModel sebagai | Punya siapa |
 | --- | --- | --- |
 | `src/shared` | `ReplicatedStorage.Unrest` | framework |
-| `src/server` | `ServerScriptService.Unrest` | framework |
-| `src/game` | `ReplicatedStorage.Game` | game, dibaca kedua realm |
+| `Packages` | `ReplicatedStorage.Packages` | dependensi Wally |
+| `src/game-net` | `ReplicatedStorage.GameNet` | game, dibaca kedua realm |
 | `src/game-server` | `ServerScriptService.Game` | game, server |
 | `src/game-client` | `StarterPlayer.StarterPlayerScripts.Game` | game, client |
 
-`Unrest` dan `Game` **bersebelahan**, bukan bersarang. Itu yang membuat aturan berikut bisa
+Itu **seluruh** isi `default.project.json`. Tidak ada mount lain, dan khususnya tidak ada
+`StarterGui`: UI tidak pernah masuk pohon Rojo, karena framework yang mengadopsi UI tidak boleh
+ikut membuatnya.
+
+`Unrest` dan kode game **bersebelahan**, bukan bersarang. Itu yang membuat aturan berikut bisa
 ditegakkan hanya dengan membaca `require`-nya:
 
 > **Kode game meng-`require` framework. Framework tidak pernah meng-`require` kode game.**
 
-Tidak ada satu berkas pun di `src/shared` atau `src/server` yang boleh menyebut
-`ReplicatedStorage.Game`. Kalau ada, sesuatu yang seharusnya ada di sisi game sudah bocor ke
+Tidak ada satu berkas pun di `src/shared` yang boleh menyebut `ReplicatedStorage.GameNet` atau
+`ServerScriptService.Game`. Kalau ada, sesuatu yang seharusnya ada di sisi game sudah bocor ke
 framework.
 
 ---
 
 ## 2. Kontrak antar lapis
 
-| Lapis | Tinggal di | Boleh bergantung pada | Tidak pernah |
-| --- | --- | --- | --- |
-| `Primitives` | ReplicatedStorage | tidak apa-apa | — |
-| `Util` (Signal, Scope, Resolver) | ReplicatedStorage | Primitives | state game |
-| `Core` | registry di shared, sistem di sisi game-server | Bridge, Util | Instance, UI, layar pemain |
-| `Bridge` | ReplicatedStorage | Net, Util | tahu tombol itu apa |
-| `Net` | kontrak di shared, gerbang khusus server | tipe Bridge, Constants | memercayai payload |
-| `Adapters` | ReplicatedStorage | Primitives | logika game |
-| `Elements` | ReplicatedStorage, khusus client saat runtime | Adapters, Bridge | memanggil sistem langsung |
+| Lapis | Boleh bergantung pada | Tidak pernah |
+| --- | --- | --- |
+| `Primitives` | tidak apa-apa | — |
+| `Util` (Signal, Scope, Slots, Resolver) | Primitives | state game |
+| `Core` | Util | Instance, UI, layar pemain |
+| `Bridge` | Util, Primitives | tahu tombol itu apa |
+| `Adapters` | Primitives, Constants | logika game |
+| `Elements` | Adapters, Bridge | memanggil sistem langsung |
+| `Widgets` | Elements, Adapters/Selector, Scope | logika game |
+
+Semuanya tinggal di `ReplicatedStorage.Unrest` dan direplikasi. `Elements` dan `Widgets` ada
+juga di server, tapi keduanya khusus client saat runtime: `Elements` tidak mengadopsi apa pun
+di sana, dan `Widgets` melempar error kalau dipanggil.
 
 Dua batas modul menanggung beban.
 
-**Kontrak itu publik; gemboknya tidak.** `Net/Contracts.luau` ada di `ReplicatedStorage`,
-tempat client mana pun bisa membacanya. Itu memang disengaja. Isinya daftar nama pintu dan
-mana yang punya gagang di sisi luar; gemboknya adalah gerbang server, yang tinggal di
-`ServerScriptService` dan tidak pernah direplikasi.
+**Kosakata framework hidup sekali, di `Constants.luau`** — tagnya, nama-nama atributnya, dan
+himpunan yang bisa diwariskan. **Nama milik game tidak tinggal di sana.** Nama channel dan nama
+perintah adalah milik game, ditulis di sebelah kode yang menanganinya, dan framework tidak
+pernah mengejanya satu pun.
 
-**Sistem hidup di sisi server.** Registry `Core` adalah mesin bersama, tapi sistem yang
-memegang state otoritatif tinggal di `src/game-server/`. Client tidak bisa membacanya, jadi
-dia tidak bisa belajar darinya atau memanggilnya kecuali lewat perintah yang dideklarasikan.
+**Sistem tinggal di sisi game.** Registry `Core` adalah mesin bersama, tapi sistem yang memegang
+state tinggal di `src/game-server/`. `Core` sendiri tidak tahu apa-apa soal isinya: `System`
+adalah titik perluasannya dan `Core:Register` adalah pintunya.
 
 ---
 
@@ -90,9 +99,29 @@ adalah menambahkan tag `Unrest`. Saat diadopsi:
    langsung mengambilnya — query adalah ikatan hidup, bukan pemindaian sekali jalan.
 
 **Adopsinya khusus client.** `ScreenGui` bertag memang ada juga di server, tapi mengikat
-event-nya di sana akan tidak berguna sekaligus menyesatkan: **peristiwa UI adalah sebuah
-permintaan**, dan otoritasnya adalah kontrak perintah yang dituju permintaan itu, tidak pernah
-tombol yang mengirimnya.
+event-nya di sana akan tidak berguna sekaligus menyesatkan: server tidak punya layar, dan tidak
+ada pemain yang pernah menekan apa pun di sana.
+
+### Satu aturan, satu pembukuan
+
+Tag itu **menurun**: menandai sebuah wadah mengelola wadah itu dan setiap `GuiObject` di
+bawahnya, sampai tertahan `UnrestIgnore`. Aturannya tinggal di `Adapters/Selector.luau` sebagai
+predikat murni tanpa state — `isManaged`, `cascadeUnder`, `isGate`, `gatesAbove`, `isPresent`.
+Pembukuan yang membuat jawaban-jawaban itu tetap hidup — akar bertag, satu `DescendantAdded`
+per akar, satu pengawas `UnrestIgnore` per gerbang, dan sapuan ulang saat sebuah tag atau
+sebuah `UnrestIgnore` disunting — tinggal di `Adapters/Cascade.luau`.
+
+`Elements` dan `Query` masing-masing menyerahkan empat callback ke pembukuan itu (`Cover`,
+`Uncover`, `Tracks`, `Covered`) dan tidak lebih. Mengadopsi versus sekadar mengamati adalah
+satu-satunya hal yang masih boleh mereka bedakan. Dulu ini dua salinan yang ~74% identik, dan
+satu pertanyaan yang dijawab di dua tempat adalah bentuk setiap bug serius di repo ini. Jangan
+menambah salinan ketiga, dan jangan memindahkan pembukuannya ke dalam `Selector`: state di sana
+akan mencabut satu-satunya hal yang membuat modul itu bisa dipercaya.
+
+Satu jebakan yang harus diingat siapa pun yang membaca tag langsung: **tag hidup lebih lama dari
+instance-nya.** `Destroy()` mengeluarkan instance dari `CollectionService:GetTagged` tapi
+meninggalkan tagnya, jadi `HasTag` menjawab `true` selamanya sesudah itu. Karena itu
+`Selector.isManaged` bertanya `IsDescendantOf(game)` lebih dulu.
 
 Selengkapnya di [Adopsi dan Tag](UI-ADOPTION.md) dan [Cakupan Adapter](UI-ADAPTERS.md).
 
@@ -104,42 +133,42 @@ Selengkapnya di [Adopsi dan Tag](UI-ADOPTION.md) dan [Cakupan Adapter](UI-ADAPTE
 | --- | --- | --- |
 | Core → UI | `Publish` / `Subscribe` / `Peek` | ditahan, jadi pelanggan yang telat tetap dapat nilai sekarang |
 | UI → Core | `Dispatch` | kirim dan lupakan, tidak pernah yield |
-| UI → Core | `Invoke` | permintaan/balasan, yield, kontrak harus mengizinkan |
-| mana pun | `Handle` | memasang handler di realm pemilik perintahnya |
+| mana pun | `Handle` | memasang handler untuk sebuah nama perintah; beberapa handler boleh mendengar nama yang sama |
+
+Seluruh permukaannya: `Context`, `Publish`, `Subscribe`, `Peek`, `Dispatch`, `Handle`,
+`Destroy`. Tidak ada yang lain.
 
 Penahanan itulah yang membuat urutan adopsi tidak relevan: elemen yang ditandai tiga puluh
 detik setelah sebuah nilai diterbitkan tetap merender state sekarang di frame pertamanya.
 
-Yang menentukan sebuah dispatch tetap lokal atau menyeberang kabel adalah `Realm` milik
-perintahnya, **bukan pemanggilnya**. Baris kode client yang sama bekerja untuk keduanya.
+`Dispatch` selalu lokal. Tidak ada argumen sumber di `CommandHandler`, karena pemanggilnya ada
+di sisi tumpukan panggilan yang sama. Perintah tanpa handler adalah no-op yang diam, bukan
+galat.
 
 Selengkapnya di [API Bridge](API-BRIDGE.md).
 
 ---
 
-## 5. Model keamanan
+## 5. Framework tidak punya lapisan jaringan
 
-Bentuknya, dalam delapan poin. Rinciannya di [Keamanan Remote](REMOTE-SECURITY.md).
+Ini keputusan, bukan kelalaian. Framework mengurus satu batas — antara logika dan layar — dan
+batas mesin bukan batas itu. Game yang butuh remote memilikinya sendiri, di luar framework, dan
+menyambungkannya ke Bridge dalam satu baris.
 
-- **Tolak secara bawaan.** Tanpa `AllowClient = true`, tidak ada akses client.
-- **Pemeriksaan client adalah kenyamanan; pemeriksaan server adalah kontrolnya.** Client
-  menolak mengirim perintah yang tidak sah supaya kesalahannya muncul saat pengembangan, dan
-  server melakukan pemeriksaan yang identik saat kedatangan tanpa peduli apa yang dilakukan
-  client.
-- **Identitas datang dari transport.** Pemainnya adalah yang ditaruh Roblox di argumen pertama
-  callback remote, tidak pernah sebuah field di payload.
-- **Payload adalah data biasa, dan dibatasi.** Divalidasi terhadap `ArgumentSpec` — tipe,
-  panjang string, batas dan kefinitan angka, kedalaman dan lebar tabel. Tidak ada Instance,
-  tidak ada fungsi, tidak ada metatable, tidak ada siklus.
-- **Dua batas laju.** Per pemain per perintah, ditambah jatah global per pemain, supaya banyak
-  perintah murah tidak bisa dipakai menghindari jatah per perintah.
-- **Satu gerbang.** Satu `RemoteEvent` dan satu `RemoteFunction`, keduanya client → server.
-  Server tidak pernah meng-invoke client. Replikasi channel adalah event server → client yang
-  terpisah.
-- **Channel menyatakan sejauh mana dia merambat.** `Server` adalah bawaannya, jadi sebuah
-  channel tidak bisa bocor karena kelalaian.
-- **Penolakan tidak mengajari client apa pun.** Alasannya dicatat di sisi server; pemanggil
-  cuma menerima kegagalan yang kasar.
+Begitulah repo ini melakukannya. `src/game-net/init.luau` adalah namespace ByteNet milik game
+di `ReplicatedStorage.GameNet`, satu paket per pesan, dibaca kedua realm supaya id paketnya
+sepakat. Lalu:
+
+* **turun** — `src/game-client/Shop.luau` mendengarkan paket dan memanggil `bridge:Publish`,
+  jadi label bertag melukis dirinya dari channel;
+* **naik** — `src/game-server/init.server.luau` mendengarkan paket dan memanggil
+  `unrest.Bridge:Dispatch`, dengan `player` yang diisi Roblox sebagai argumen kedua ByteNet.
+
+Konsekuensi yang harus dipegang: **identitas dan otoritas urusan kode game itu.** Batas
+tepercaya yang terakhir adalah `listen` milik game, tempat `player` datang dari Roblox dan tidak
+pernah dari isi pesan. Framework tidak melihat satu pun dari itu — dari sisi Bridge, sebuah
+`Dispatch` yang lahir dari paket dan sebuah `Dispatch` yang lahir dari klik tidak bisa
+dibedakan.
 
 ---
 
@@ -160,22 +189,44 @@ Selengkapnya di [API Core](API-CORE.md).
 
 ---
 
-## 7. Bootstrap, dan kenapa gerbangnya dibuka terakhir
+## 7. Bootstrap
+
+Di server, tiga langkah, dan urutannya membawa makna:
 
 ```luau
 -- src/game-server/init.server.luau
-require(ReplicatedStorage.Game)                  -- 1. deklarasi kontrak dan preset
+local GameNet = require(ReplicatedStorage.GameNet)
 local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:Register(require(script.Systems.Greeter)) -- 2. daftarkan sistem
-local unrest = Unrest:Start()                    -- 3. Init lalu Start
-unrest:OpenGateway()                             -- 4. remote muncul
+
+Unrest:Register(require(script.Systems.Dompet))   -- 1. daftarkan sistem
+Unrest:Register(require(script.Systems.Toko))
+
+local unrest = Unrest:Start()                     -- 2. Init lalu Start setiap sistem
+
+GameNet.packets.Beli.listen(function(data, player) -- 3. baru dengarkan paketnya
+    unrest.Bridge:Dispatch("Toko.Beli", { Player = player, Item = data.Barang })
+end)
 ```
 
-Remote baru muncul saat gerbang dinyalakan. Menyalakannya **terakhir** berarti permintaan
-paling awal yang bisa dikirim client pun sudah pasti menemukan seluruh handler terpasang —
-karena handler dipasang di `Init`, dan `Init` selesai di baris 3.
+Handler muncul saat `Init` dan `Start` berjalan, yaitu di langkah 2. Memasang pendengar paket
+**terakhir** berarti permintaan paling awal yang bisa dikirim pemain pun sudah pasti menemukan
+seluruh handler terpasang. Kalau dibalik, ada jendela waktu di mana pesan sudah bisa tiba dan
+belum ada yang bisa menjawabnya.
 
-Tidak ada jendela waktu di mana pintunya terbuka dan ruangannya kosong.
+Di client lebih pendek — start, lalu muat fiturnya:
+
+```luau
+-- src/game-client/init.client.luau
+local unrest = require(ReplicatedStorage.Unrest):Start()
+
+require(script.Shop)(unrest)
+```
+
+Urutan memuat fitur tidak penting. Setiap fitur mengikat lewat `Unrest:Query`, dan ikatan itu
+hidup: elemen yang ditandai belakangan, bahkan saat game sedang jalan, tetap terjaring.
+
+`Start()` sendiri hanya melakukan dua hal: menyalakan adopsi kalau konteksnya client, lalu
+menjalankan `core:Start`. Memanggilnya dua kali mengembalikan singleton yang sama.
 
 ---
 
@@ -194,36 +245,43 @@ Tiga pola yang dipaksakan checker strict:
 ## 9. Peta berkas
 
 ```
-src/shared/            ReplicatedStorage.Unrest — direplikasi, anggap setiap client membacanya
-  init.luau            composition root; singleton-nya
-  Primitives.luau      tipe Signal/Scope/Connection, nol require
-  Types.luau           permukaan tipe publik, meng-export ulang dua di bawah
-  Constants.luau       tag, nama atribut, nama remote, batas keras
-  Util/                Signal, Scope (Scythe), Resolver
-  Core/init.luau       registry sistem dan siklus hidupnya
-  Bridge/init.luau     publish/subscribe, dispatch/invoke, perutean jaringan
-  Net/                 Types, Contracts, Client, Validate, Transport — pengetahuan publik saja
-  Net/Transports/      transport bawaan di atas remote Roblox
-  Adapters/            registry, adapter per kelas, selector, mesin query
-  Presets.luau         bundel atribut bernama; kosong sampai game mengisinya
-  Elements/init.luau   adopsi UI Studio bertag (khusus client saat runtime)
+src/shared/               ReplicatedStorage.Unrest — direplikasi, anggap setiap client membacanya
+  init.luau               composition root; singleton-nya
+  Primitives.luau         tipe Signal/Scope/Connection, nol require
+  Types.luau              permukaan tipe publik, meng-export ulang yang lain
+  Constants.luau          tag, nama atribut, himpunan yang bisa diwariskan
+  Presets.luau            bundel atribut bernama; kosong sampai game mengisinya
+  Util/Signal.luau        sinyal ringan
+  Util/Scope.luau         re-export Scythe; satu-satunya berkas yang menyebut jalurnya
+  Util/Slots.luau         daftar handler yang aman disunting saat sedang dijalani
+  Util/Resolver.luau      pemeriksaan bentuk saat runtime, dengan tebakan salah ketik
+  Core/init.luau          registry sistem dan siklus hidupnya
+  Bridge/init.luau        publish/subscribe dan dispatch/handle, lokal
+  Adapters/init.luau      registry adapter dan pengikatan handler
+  Adapters/Selector.luau  predikat murni: dikelola, menurun, gerbang, hadir; resolusi atribut
+  Adapters/Cascade.luau   pembukuan yang menjaga jawaban Selector tetap hidup
+  Adapters/Query.luau     mesin query; ikatan hidup, bukan pemindaian
+  Adapters/Types.luau     tipe lapisan adopsi
+  Adapters/Classes/       pengetahuan per kelas: Buttons, Common, Frames, GuiBase,
+                          Interaction, LayerCollectors, Text, UIComponents
+  Elements/init.luau      adopsi UI Studio bertag (khusus client saat runtime)
+  Widgets/init.luau       kontrol banyak bagian: `Each` dan `Drag`
 
-src/server/            ServerScriptService.Unrest — tidak pernah direplikasi
-  Net/Server.luau      gerbang otoritatif
+src/game-net/             ReplicatedStorage.GameNet — punya game, dibaca kedua realm
+  init.luau               namespace ByteNet: satu paket per pesan
 
-src/game/              ReplicatedStorage.Game — punyamu, dibaca kedua realm
-  init.luau            pintu depan; meng-require-nya mendeklarasikan semuanya
-  Names.luau           nama channel dan perintah
-  Contracts.luau       kebijakan, sebagai data
-  Presets.luau         bundel atribut
-  Types.luau           bentuk sistem game ini
-  Packets.luau         format kabel game ini
-  Transport.luau       transport ByteNet, sebagai TransportProvider
+src/game-server/          ServerScriptService.Game — punya game, server
+  init.server.luau        bootstrap server; pendengar paket dipasang terakhir
+  Systems/Dompet.luau     state per pemain
+  Systems/Toko.luau       aturan pembelian
 
-src/game-server/       ServerScriptService.Game — punyamu, server
-  init.server.luau     bootstrap server
-  Systems/             sistem-sistem game ini
-
-src/game-client/       StarterPlayer.StarterPlayerScripts.Game — punyamu, client
-  init.client.luau     bootstrap client
+src/game-client/          StarterPlayer.StarterPlayerScripts.Game — punya game, client
+  init.client.luau        bootstrap client
+  Shop.luau               paket ⇄ channel, dan tombol beli
+  Slider.luau             slider di atas `Widgets`
+  Toggle.luau             sakelar di atas `Widgets`
 ```
+
+Framework punya **satu** dependensi pihak ketiga, `synttx/scythe`, dan dia di-`require` di
+tepat satu berkas (`Util/Scope.luau`). ByteNet ada di `Packages/` untuk kode game; framework
+tidak menyentuhnya.

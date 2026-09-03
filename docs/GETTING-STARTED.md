@@ -1,47 +1,51 @@
 # Panduan Memulai
 
-Ikuti halaman ini sekali, berurutan, dan kamu akan punya satu layar yang mengirim perintah ke
-server dan satu label yang mengikuti state server. Kamu tidak perlu membaca satu baris pun
-kode framework untuk menyelesaikannya.
+Ikuti halaman ini sekali, berurutan, dan kamu akan punya satu layar yang mengirim perintah
+beli ke server dan satu label yang mengikuti saldo koin. Kamu tidak perlu membaca satu baris
+pun kode framework untuk menyelesaikannya.
 
 Yang diasumsikan: kamu sudah bisa memakai Roblox Studio. Yang tidak diasumsikan: apa pun
 tentang framework ini.
+
+Satu kalimat yang menghemat banyak kebingungan nanti: **framework ini murni abstraksi UI.**
+Dia tidak membuat UI, dan dia juga tidak membawa jaringan. Menyeberangkan pesan antara client
+dan server adalah pekerjaan game-mu, dan halaman ini menunjukkan persis bagaimana game contoh
+di repo ini melakukannya.
 
 ---
 
 ## 0. Peta tempat: kode siapa taruh di mana
 
 Ini bagian yang paling sering bikin bingung, jadi kita selesaikan dulu sebelum menulis apa
-pun. Ada **lima folder**, dan hanya **tiga** yang boleh kamu sentuh.
+pun. Semua yang ada di `default.project.json`, tidak ada yang lain:
 
 | Folder di disk | Muncul di DataModel sebagai | Punya siapa |
 | --- | --- | --- |
 | `src/shared` | `ReplicatedStorage.Unrest` | **framework** — jangan disentuh |
-| `src/server` | `ServerScriptService.Unrest` | **framework** — jangan disentuh |
-| `src/game` | `ReplicatedStorage.Game` | **kamu** — dibaca client *dan* server |
+| `src/game-net` | `ReplicatedStorage.GameNet` | **kamu** — dibaca client *dan* server |
 | `src/game-server` | `ServerScriptService.Game` | **kamu** — hanya server |
 | `src/game-client` | `StarterPlayer.StarterPlayerScripts.Game` | **kamu** — hanya client |
+| `Packages` | `ReplicatedStorage.Packages` | Wally — hasil `wally install` |
 
 Cara mengingatnya cuma satu baris:
 
-> **`Unrest` itu framework. `Game` itu kamu.**
+> **`Unrest` itu framework. Yang berawalan `game-` itu kamu.**
 
-Dua nama itu bersebelahan di DataModel, bukan bersarang. `ReplicatedStorage.Game` ada di
-*sebelah* `ReplicatedStorage.Unrest`, bukan di dalamnya. Itu disengaja, dan itu juga alasan
-kenapa aturan berikut bisa ditegakkan:
+Awalan `game-` bukan gaya-gayaan. Berkas framework pernah **dua kali** terhapus karena
+dikira milik game, jadi sekarang kepemilikan terbaca dari nama foldernya sendiri, sebelum
+kamu membuka isinya.
+
+Arah ketergantungannya cuma satu, dan tidak pernah berbalik:
 
 > **Kode game meng-`require` framework. Framework tidak pernah meng-`require` kode game.**
-> Tidak ada satu berkas pun di `src/shared` atau `src/server` yang boleh menyebut
-> `ReplicatedStorage.Game`.
-
-Kalau kamu pernah tidak sengaja menghapus sesuatu di `Unrest` karena mengira itu punyamu:
-bukan salahmu, tata letaknya memang tidak menjelaskan dirinya sendiri. Sekarang sudah.
+> Tidak ada satu berkas pun di `src/shared` yang boleh menyebut `ReplicatedStorage.GameNet`
+> atau `ServerScriptService.Game`.
 
 Jawaban singkat untuk "aku mulai nulis script di mana":
 
 - **Sisi server** → `src/game-server/init.server.luau`
 - **Sisi client** → `src/game-client/init.client.luau`
-- **Yang dipakai keduanya** → `src/game/`
+- **Yang dipakai keduanya** → `src/game-net/` (format kabel game ini)
 
 ---
 
@@ -49,20 +53,28 @@ Jawaban singkat untuk "aku mulai nulis script di mana":
 
 ```sh
 rokit install     # sekali per clone; tanpa ini shim Rokit menolak jalan
+wally install     # mengisi Packages/ — game contoh memakai ByteNet
 rojo serve        # menyajikan default.project.json di port 34872
 ```
 
 Di Studio: **Plugins → Rojo → Connect**.
 
-**Yang seharusnya kamu lihat** di Explorer, lima hal, persis seperti tabel di bagian 0:
+> **Satu ranjau di `bytenet-max@1.0.0`.** Versi yang terbit tidak bisa di-`require` apa
+> adanya: `namespaces/namespace` dan `dataTypes/struct` sama-sama meminta
+> `namespacesDependencies`, sementara berkasnya bernama `namespaceDependencies` — beda satu
+> huruf. Salinan di `Packages/` ditambal tangan, dan `wally install` berikutnya akan menimpa
+> tambalan itu. Kalau tiba-tiba `require(ReplicatedStorage.GameNet)` gagal setelah install,
+> itu penyebabnya.
+
+**Yang seharusnya kamu lihat** di Explorer, persis seperti tabel di bagian 0:
 
 ```
 ReplicatedStorage
 ├── Unrest        ← framework
-└── Game          ← punyamu, dibaca dua sisi
+├── GameNet       ← punyamu, dibaca dua sisi
+└── Packages      ← dependensi Wally
 
 ServerScriptService
-├── Unrest        ← framework
 └── Game          ← punyamu, server
 
 StarterPlayer/StarterPlayerScripts
@@ -76,165 +88,226 @@ Jalankan dari akar repo, tempat `default.project.json` berada.
 
 ## 2. Tulis bootstrap server
 
-Buat berkas `src/game-server/init.server.luau`. Isinya empat baris yang penting, dan
-**urutannya bermakna**:
+Buka `src/game-server/init.server.luau`. Isinya tiga langkah, dan **urutannya bermakna**:
 
 ```luau
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-require(ReplicatedStorage.Game)                  -- 1. deklarasi kontrak dan preset
+local GameNet = require(ReplicatedStorage.GameNet)
 local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:Register(require(script.Systems.Greeter)) -- 2. daftarkan sistem
-local unrest = Unrest:Start()                    -- 3. Init lalu Start
-unrest:OpenGateway()                             -- 4. remote muncul
+
+Unrest:Register(require(script.Systems.Dompet))   -- 1. daftarkan sistem
+Unrest:Register(require(script.Systems.Toko))
+
+local unrest = Unrest:Start()                     -- 2. Init lalu Start
+
+GameNet.packets.Beli.listen(function(data, player: Player?): ()   -- 3. pintu dibuka
+    if player == nil or typeof(data) ~= "table" or typeof(data.Barang) ~= "string" then
+        return
+    end
+    unrest.Bridge:Dispatch("Toko.Beli", { Player = player, Item = data.Barang })
+end)
 ```
 
 ### Kenapa urutannya begitu
 
 Baca dari bawah, karena baris terakhir yang menjelaskan sisanya.
 
-**Baris 4 adalah saat pintu dibuka.** `OpenGateway` yang membuat objek remote muncul di
-DataModel. Sebelum baris itu jalan, tidak ada satu pun jalan bagi client untuk mengirim
-apa pun ke server — bukan karena ditolak, tapi karena remote-nya belum ada.
-
-Jadi meletakkannya **paling akhir** memberi jaminan yang enak: permintaan paling awal yang
-mungkin dikirim client pun pasti menemukan seluruh handler sudah terpasang. Tidak ada celah
-waktu di mana pintunya terbuka tapi ruangannya masih kosong.
+**Langkah 3 adalah saat pintu dibuka.** Sebelum `listen` terpasang, paket `Beli` yang dikirim
+seorang pemain tidak sampai ke mana-mana. Memasangnya **paling akhir** memberi jaminan yang
+enak: permintaan paling awal yang mungkin datang pun pasti menemukan seluruh handler sudah
+terpasang. Tidak ada celah waktu di mana pintunya terbuka tapi ruangannya masih kosong.
 
 Sekarang baris-baris sebelumnya jadi masuk akal:
 
-| Baris | Yang terjadi | Kalau dilewat |
+| Langkah | Yang terjadi | Kalau dilewat |
 | --- | --- | --- |
-| 1. `require(ReplicatedStorage.Game)` | Setiap perintah dan channel didaftarkan ke registry framework. Meng-`require`-nya **adalah** pendaftarannya. | Framework gagal tertutup: setiap perintah ditolak `UnknownCommand`. Tidak berbahaya, cuma tidak jalan. |
-| 2. `Unrest:Register(...)` | Sistem masuk ke registry. Belum jalan, baru terdaftar. | Sistemnya tidak pernah hidup. |
-| 3. `Unrest:Start()` | `Init(unrest)` untuk semua sistem sesuai urutan dependensi, lalu `Start()` untuk semua sistem. Di sinilah `Bridge:Handle` dipanggil. | Tidak ada handler yang terpasang. |
-| 4. `unrest:OpenGateway()` | Remote dibuat. Client mulai bisa bicara. | Semua yang dikirim client tidak sampai. |
+| 1. `Unrest:Register(...)` | Sistem masuk ke registry. Belum jalan, baru terdaftar. | Sistemnya tidak pernah hidup. |
+| 2. `Unrest:Start()` | `Init(unrest)` untuk semua sistem sesuai urutan dependensi, lalu `Start()` untuk semua sistem. **Di sinilah `Bridge:Handle` dipanggil.** | Tidak ada handler yang terpasang, jadi `Dispatch` masuk ke ruangan kosong — diam, tanpa galat. |
+| 3. `GameNet.packets.Beli.listen(...)` | Paket dari client mulai diterima dan diterjemahkan jadi satu `Bridge:Dispatch`. | Klik pemain tidak sampai ke server sama sekali. |
 
 Perhatikan bahwa `Bridge:Handle` biasanya dipanggil di dalam `Init` sebuah sistem. Karena
-`Start()` menjalankan semua `Init` sebelum baris 4, seluruh handler sudah pasti terdaftar
+`Start()` menjalankan semua `Init` sebelum langkah 3, seluruh handler sudah pasti terdaftar
 saat pintu dibuka. Itu bukan kebetulan, itu alasan urutan ini dipilih.
+
+Dua hal lagi yang penting di `listen` itu, dan keduanya tanggung jawabmu:
+
+* **`player` adalah argumen kedua**, diteruskan apa adanya dari `OnServerEvent`. Identitas
+  datang dari Roblox, **tidak pernah dari isi pesan**. Paket `Beli` tidak punya field pemain,
+  dan tidak boleh punya.
+* **Bentuk `data` diperiksa di sini**, karena tidak ada lapisan lain yang memeriksanya lebih
+  dulu. Framework tidak memvalidasi apa pun untukmu: `Bridge:Dispatch` mengantar payload apa
+  adanya.
 
 ### Sistem paling kecil yang tetap jalan
 
-Buat `src/game-server/Systems/Greeter.luau`:
+Sebuah sistem adalah tabel biasa. Lihat `src/game-server/Systems/Toko.luau`; bentuk
+terkecilnya seperti ini:
 
 ```luau
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-local Game = require(ReplicatedStorage.Game)
-local UnrestTypes = require(ReplicatedStorage.Unrest.Types)
+local Types = require(ReplicatedStorage.Unrest.Types)
 
-local Greeter = {
-    Name = "Greeter",
-    Dependencies = {} :: { string },
+local Toko = {
+    Name = "Toko",
+    Dependencies = { "Dompet" },
 }
 
-function Greeter:Init(unrest: UnrestTypes.Unrest): ()
-    unrest.Bridge:Handle(Game.Commands.Greet, function(source, payload)
-        print(`halo, {source.Player and source.Player.Name or "server"}`)
-        return true
+function Toko:Init(unrest: Types.Unrest): ()
+    unrest.Bridge:Handle("Toko.Beli", function(payload: any)
+        if typeof(payload) ~= "table" then
+            return
+        end
+        print(`{payload.Player} mau beli {payload.Item}`)
     end)
 end
 
-return Greeter
+function Toko:Start(): () end
+
+function Toko:Destroy(): () end
+
+return Toko
 ```
 
-Dua hal yang wajib ada di sini dan mudah terlupa:
+Tiga hal yang wajib dan mudah terlupa:
 
 * **`Name` wajib**, dan harus unik. Itu kunci registry-nya.
-* **`Dependencies` wajib ditulis walau kosong** — `{} :: { string }`. Tanpa itu type checker
-  strict tidak mengenali tabelmu sebagai `System`.
+* **`Dependencies` wajib ditulis walau kosong** — `{} :: { string }`. Itu yang menjamin
+  `Dompet:Init` sudah selesai sebelum `Toko:Init` jalan.
+* **`Start` dan `Destroy` sebaiknya tetap ditulis walau kosong.** `Types.System`
+  mendeklarasikan ketiganya opsional; type checker Luau tidak sependapat dan menolak tabel
+  yang kehilangan salah satunya. Itu pajak, bukan pilihan.
 
-`Init`, `Start`, dan `Destroy` semuanya opsional. Lihat [API Core](API-CORE.md) untuk
-siklus hidup lengkapnya.
+Siklus hidup lengkapnya ada di [API Core](API-CORE.md).
 
 ---
 
 ## 3. Tulis bootstrap client
 
-Buat berkas `src/game-client/init.client.luau`:
+Buka `src/game-client/init.client.luau`. Lebih pendek:
 
 ```luau
 --!strict
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-require(ReplicatedStorage.Game)                  -- 1. kontrak dan preset, sama persis
 local Unrest = require(ReplicatedStorage.Unrest)
-local unrest = Unrest:Start()                    -- 2. jaringan hidup, UI bertag diadopsi
+
+local unrest = Unrest:Start()
+
+require(script.Shop)(unrest)
 ```
 
-Lebih pendek dari sisi server, dan bedanya cuma satu: **tidak ada `OpenGateway` di client.**
-Remote dibuat oleh server; client menunggunya. Membuka gerbang adalah tindakan yang hanya
-punya arti di sisi yang memegang gembok.
+Tidak ada langkah "nyalakan jaringan" di sini, karena framework tidak punya jaringan untuk
+dinyalakan. Yang ada cuma dua hal, dan `Unrest:Start()` melakukannya dalam urutan ini:
 
-Dua hal yang dilakukan `Unrest:Start()` di client:
+1. **Mengadopsi UI.** Setiap instance bertag `Unrest` yang ada di DataModel mulai dikelola,
+   dan tag yang datang belakangan tetap ditangkap. Ini **hanya terjadi di client** — di
+   server `Elements` ada tapi tidak mengadopsi apa pun, karena server tidak punya layar dan
+   tidak ada pemain yang mengklik apa pun di sana.
+2. **Menjalankan sistem.** `Init` semuanya, lalu `Start` semuanya, sama seperti di server.
 
-1. Menghidupkan setengah-client dari lapisan jaringan.
-2. **Mengadopsi UI.** Setiap instance bertag `Unrest` di `PlayerGui` mulai dikelola. Ini
-   hanya terjadi di client — di server, `Elements` ada tapi tidak mengadopsi apa pun.
+Urutannya begitu supaya sebuah sistem yang di `Init`-nya langsung memanggil `Unrest:Query`
+sudah menemukan layar yang ada. Dan kalaupun tidak, query itu ikatan hidup: elemen yang
+ditandai sepuluh menit lagi akan terikat sepuluh menit lagi.
 
-Kenapa client juga harus `require(ReplicatedStorage.Game)`? Karena Roblox menyimpan cache
-ModuleScript **per realm**. Server punya salinan registry-nya sendiri, client punya
-salinannya sendiri. Keduanya harus diberi tahu. Kalau client lupa, dia akan menolak mengirim
-perintah yang sebenarnya sah, dengan `UnknownCommand` di sisi client.
+Sisa berkas di `src/game-client/` cuma fitur, satu berkas satu fitur, masing-masing menerima
+`unrest` sebagai argumen pertama:
+
+```luau
+require(script.Shop)(unrest)
+require(script.Slider)(unrest, { --[[ aksi per UnrestGroup ]] })
+require(script.Toggle)(unrest, { --[[ aksi per UnrestGroup ]] })
+```
+
+Urutan `require`-nya tidak penting. Menambah fitur berarti menambah berkas dan satu baris,
+bukan menumbuhkan berkas ini.
 
 ---
 
-## 4. Deklarasikan perintah pertamamu
+## 4. Bridge tidak menyeberangi mesin — jadi jaringan itu urusanmu
 
-Sekarang isi `src/game/`. Detail lengkapnya ada di halaman
-[ModuleScript `Game`](GAME-MODULE.md); di sini kita ambil versi paling ringkasnya.
+Ini bagian yang paling sering disalahpahami, dan paling penting.
 
-**`src/game/Names.luau`** — nama, dieja sekali saja:
-
-```luau
---!strict
-return table.freeze({
-    Channels = table.freeze({
-        Greeting = "Greet.Last",
-    }),
-    Commands = table.freeze({
-        Greet = "Greet.Say",
-    }),
-})
-```
-
-**`src/game/Contracts.luau`** — kebijakannya. Ini yang menentukan apa yang boleh diminta
-client:
+`Bridge` adalah **bus lokal**. Seluruh permukaannya:
 
 ```luau
---!strict
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+bridge:Publish(channel, value)     -- state -> UI, nilainya ditahan
+bridge:Subscribe(channel, handler)
+bridge:Peek(channel)               -- nilai terakhir, atau nil
 
-local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
-local Names = require(script.Parent.Names)
-
-Contracts:Declare({
-    Name = Names.Commands.Greet,
-    Realm = "Server",
-    AllowClient = true,                    -- baris inilah yang membuka pintunya
-    Payload = { Kind = "string", MaxLength = 32 },
-    RateLimit = { Count = 2, Window = 1 },
-    Response = true,
-    Description = "Sapa pemanggilnya.",
-})
-
-Contracts:DeclareChannel({
-    Name = Names.Channels.Greeting,
-    Visibility = "Public",
-    Value = { Kind = "string", Optional = true, MaxLength = 64 },
-    Description = "Sapaan terakhir yang dikirim siapa pun.",
-})
-
-return table.freeze({})
+bridge:Dispatch(command, payload)  -- UI -> kode, kirim lalu lupakan
+bridge:Handle(command, handler)
 ```
 
-**Menambah nama di `Names.luau` tidak memberi apa-apa.** Yang memberi izin adalah
-`AllowClient = true` di `Contracts.luau`. Hilangkan baris itu dan perintahnya tetap ada,
-tetap bisa dipakai kode server, tapi tidak bisa dijangkau client sama sekali. Ketiadaan
-izin **adalah** penolakannya — tidak ada `Private = true` yang harus kamu ingat menulis.
+Tidak ada argumen `Player` di mana pun, dan tidak ada satu pun dari fungsi itu yang
+menyeberangi mesin. Ada satu Bridge di server dan satu Bridge di setiap client, dan keduanya
+tidak saling bicara. `Dispatch` dengan nama yang tidak ada handler-nya adalah **no-op yang
+diam**, itu disengaja.
+
+Jadi kalau sebuah tombol di layar pemain harus menghasilkan sesuatu di server, **game-mu yang
+mengirim pesannya sendiri.** Repo ini memakai ByteNet, dan skemanya tinggal di
+`src/game-net/init.luau`:
+
+```luau
+return ByteNetMax.defineNamespace("Game", function()
+    return {
+        packets = {
+            Beli = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({ Barang = ByteNetMax.string }),
+            }),
+            Koin = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({ Nilai = ByteNetMax.uint32 }),
+            }),
+            Pesan = ByteNetMax.definePacket({
+                value = ByteNetMax.struct({ Teks = ByteNetMax.string }),
+            }),
+        },
+    }
+end)
+```
+
+Satu paket per jenis pesan, bukan satu amplop serbaguna. Itulah gunanya ByteNet: skema
+konkret yang bisa dipak rapat.
+
+Polanya sama di kedua arah, dan cuma satu kalimat: **paket masuk, lalu segera diterjemahkan
+jadi satu panggilan Bridge.**
+
+| Arah | Yang mengirim | Yang menerima | Baris yang menyambungkannya |
+| --- | --- | --- | --- |
+| client → server | `GameNet.packets.Beli.send({ Barang = item })` di `Shop.luau` | `init.server.luau` | `unrest.Bridge:Dispatch("Toko.Beli", { Player = player, Item = data.Barang })` |
+| server → client | `GameNet.packets.Koin.sendTo({ Nilai = saldo }, player)` di `Dompet`/`Toko` | `Shop.luau` | `bridge:Publish("Koin", data.Nilai)` |
+
+Sisi client-nya, `src/game-client/Shop.luau`, seluruhnya cuma ini:
+
+```luau
+GameNet.packets.Koin.listen(function(data)
+    bridge:Publish("Koin", data.Nilai)
+end)
+
+GameNet.packets.Pesan.listen(function(data)
+    bridge:Publish("Pesan", data.Teks)
+end)
+```
+
+Dua konsekuensi yang perlu kamu simpan:
+
+* **Nama channel adalah satu-satunya sambungan antara paket dan label.** `"Koin"` di
+  `Publish` harus sama persis dengan `UnrestChannel` yang diketik desainer di Studio. Versi
+  lama pernah menulis `"koin"` huruf kecil, dan saldo pembuka tidak pernah tergambar —
+  tanpa satu pun galat.
+* **Sistem di server tidak pernah menyebut nama channel.** `Toko` mengirim paket `Koin`;
+  yang memutuskan bahwa paket itu berarti channel `"Koin"` adalah client. Pemetaannya terjadi
+  sekali, di satu tempat.
+
+Karena client meng-`require` `GameNet` sebelum replikasi tentu selesai, pakai
+`WaitForChild` di sana:
+
+```luau
+local GameNet = require(ReplicatedStorage:WaitForChild("GameNet"))
+```
 
 ---
 
@@ -251,7 +324,8 @@ Tombol itu sekarang dikelola. Dia belum melakukan apa-apa, tapi dia sudah bisa d
 
 **Tag itu menurun.** Menandai `ScreenGui`-nya saja sudah cukup untuk mengelola setiap
 `GuiObject` di bawahnya. Satu layar diikutsertakan dengan satu tag pada wadahnya, bukan
-dengan empat puluh tag pada empat puluh tombol. Aturan lengkapnya ada di
+dengan empat puluh tag pada empat puluh tombol. `UnrestIgnore = true` pada sebuah instance
+mengeluarkannya kembali beserta seluruh keturunannya. Aturan lengkapnya ada di
 [Adopsi dan Tag](UI-ADOPTION.md).
 
 Penandaan bersifat langsung dua arah: tambahkan tag saat game berjalan dan elemennya
@@ -266,26 +340,38 @@ Pilih `TextButton` yang tadi, tambahkan dua atribut di panel Properties:
 
 | Atribut | Tipe | Nilai |
 | --- | --- | --- |
-| `UnrestCommand` | string | `Greet.Say` |
-| `UnrestPayload` | string | `Halo` |
+| `UnrestCommand` | string | `Menu.Tutup` |
+| `UnrestPayload` | string | `Toko` |
 
-Tekan Play, klik tombolnya. Handler `Greeter` di server jalan.
+`Menu.Tutup` bukan nama bawaan apa pun — framework tidak mengeja satu nama perintah pun.
+Itu nama yang kamu karang sendiri, dan yang membuatnya berarti adalah handler yang kamu
+daftarkan dengan nama yang sama.
 
 Atribut itu persis sama artinya dengan menulis:
 
 ```luau
-unrest:Dispatch("Greet.Say", "Halo")
+unrest:Dispatch("Menu.Tutup", "Toko")
 ```
 
-**Atribut tidak memberi hak istimewa.** Dia lewat `Bridge:Dispatch` yang sama dengan Luau
-tulisan tangan. Kontraknya tetap yang memutuskan, server tetap memvalidasi payload, server
-tetap menerapkan batas laju. Ketik nama perintah yang tidak `AllowClient` ke dalam
-`UnrestCommand` dan hasilnya `NotClientCallable` — sama persis seperti kalau kamu menulisnya
-di kode.
+**Atribut bukan mekanisme kedua.** Dia lewat `Bridge:Dispatch` yang sama dengan Luau tulisan
+tangan, dan sampai ke handler yang sama. Dari sisi seberang Bridge, layar yang dirakit di
+Studio dan layar yang dirakit di kode tidak bisa dibedakan.
+
+Dan karena Bridge itu lokal, konsekuensinya lugas:
+
+> **`UnrestCommand` sampai ke handler di client, bukan ke server.** Yang menangkapnya adalah
+> `unrest.Bridge:Handle("Menu.Tutup", ...)` yang ditulis di `src/game-client/`. Kalau tidak
+> ada yang menangkapnya, tidak terjadi apa-apa, dan tidak ada galat.
+
+Kalau yang kamu mau adalah menyentuh server, atribut saja tidak cukup — tombolnya perlu
+mengirim paket, seperti tombol beli di bagian 9.
 
 `UnrestCommand` hanya berarti pada kelas yang bisa diaktifkan: `TextButton`, `ImageButton`,
 `ClickDetector`, `ProximityPrompt`. Pada `Frame` kamu dapat peringatan yang menyebut nama
 elemennya, dan sisa layarnya tetap jalan.
+
+Kalau tombolnya dobel-klik karena jari kelewat cepat, tambahkan `UnrestCooldown` (detik).
+Itu debounce di memori elemen itu sendiri, dan tidak lebih dari itu.
 
 ---
 
@@ -295,19 +381,20 @@ Sisipkan `TextLabel`, tandai `Unrest`, lalu tambahkan:
 
 | Atribut | Tipe | Nilai |
 | --- | --- | --- |
-| `UnrestChannel` | string | `Greet.Last` |
+| `UnrestChannel` | string | `Koin` |
 | `UnrestBind` | string | `Text` |
-| `UnrestFormat` | string | `Terakhir: {value}` |
+| `UnrestFormat` | string | `Koin: {value}` |
 
-Lalu di handler server, terbitkan nilainya:
+Nilainya datang dari `Shop.luau`, yang menerbitkannya begitu paket `Koin` tiba:
 
 ```luau
-unrest.Bridge:Publish(Game.Channels.Greeting, payload)
+bridge:Publish("Koin", data.Nilai)
 ```
 
 Tekan Play. Labelnya langsung benar, bahkan kalau dia baru diadopsi jauh setelah nilainya
 diterbitkan. Sebabnya: **channel itu ditahan (retained)**. Pelanggan yang datang belakangan
-tetap menerima nilai terakhir. Urutan berhenti jadi masalah.
+tetap menerima nilai terakhir. Urutan berhenti jadi masalah — dan itu penting justru karena
+paket dari server bisa tiba sebelum `PlayerGui` selesai direplikasi.
 
 * `UnrestBind` boleh dihilangkan kalau kelasnya punya satu nilai yang jelas. `TextLabel`
   menulis `Text`, `ImageLabel` menulis `Image`, `ScrollingFrame` menulis `CanvasPosition`.
@@ -315,8 +402,8 @@ tetap menerima nilai terakhir. Urutan berhenti jadi masalah.
   atau `boolean` dari sebuah channel. Dengan format, hasilnya selalu string, dan `nil`
   menjadi kosong, bukan tulisan `nil`.
 * `UnrestBind` adalah **daftar-izin per kelas**. `UnrestBind = "Parent"` cuma memberi
-  peringatan, tidak menulis apa pun — nilai yang bisa datang dari server tidak boleh menulis
-  properti sembarangan.
+  peringatan dan tidak menulis apa pun — sebuah nilai yang datang dari channel tidak boleh
+  menulis properti sembarangan.
 
 ---
 
@@ -325,13 +412,23 @@ tetap menerima nilai terakhir. Urutan berhenti jadi masalah.
 Langkah 6 dan 7 tidak berskala. Tiga atribut di setiap label dan dua di setiap tombol berarti
 banyak kesempatan salah ketik.
 
-**Preset adalah bundel bernama.** Daftarkan di `src/game/Presets.luau`:
+**Preset adalah bundel bernama.** Framework tidak membawa satu preset pun — preset menyebut
+nama channel atau perintah, dan nama itu milik game. Daftarkan sendiri di kode game-mu,
+sebelum `Unrest:Start()`:
 
 ```luau
-Presets.Register("GreetingLabel", {
-    [ATTRIBUTES.Channel] = CHANNELS.Greeting,
+--!strict
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+
+local Constants = require(ReplicatedStorage.Unrest.Constants)
+local Presets = require(ReplicatedStorage.Unrest.Presets)
+
+local ATTRIBUTES = Constants.Attributes
+
+Presets.Register("LabelKoin", {
+    [ATTRIBUTES.Channel] = "Koin",
     [ATTRIBUTES.Bind] = "Text",
-    [ATTRIBUTES.Format] = "Terakhir: {value}",
+    [ATTRIBUTES.Format] = "Koin: {value}",
 })
 ```
 
@@ -339,14 +436,13 @@ Lalu di Studio, ganti tiga atribut tadi dengan satu:
 
 | Atribut | Nilai |
 | --- | --- |
-| `UnrestPreset` | `GreetingLabel` |
+| `UnrestPreset` | `LabelKoin` |
 
 **Preset adalah nilai bawaan, bukan penimpa.** Satu hal yang berbeda tetap ditulis di
 elemennya sendiri, dan yang ditulis di elemen selalu menang.
 
-**Grup ditulis sekali.** Set `UnrestGroup = "MenuUtama"` di **ScreenGui**-nya. Setiap
-keturunan yang dikelola mewarisinya, dan `unrest:Query({ Group = "MenuUtama" })` memilih
-semuanya sekaligus.
+**Grup ditulis sekali.** Set `UnrestGroup = "Toko"` di **ScreenGui**-nya. Setiap keturunan
+yang dikelola mewarisinya, dan `unrest:Query({ Group = "Toko" })` memilih semuanya sekaligus.
 
 Tiga aturan yang mengatur ini, dan hanya tiga:
 
@@ -359,36 +455,49 @@ Tiga aturan yang mengatur ini, dan hanya tiga:
    `BillboardGui`), setelah membaca atributnya sendiri. Satu layar adalah cakupan terluas
    yang boleh dimiliki sebuah nilai warisan.
 
-Detailnya di [Referensi Atribut](UI-ATTRIBUTES.md).
+Detailnya di [Referensi Atribut](UI-ATTRIBUTES.md) dan [API Presets](API-PRESETS.md).
 
 ---
 
 ## 9. Kapan berhenti memakai atribut
 
-`UnrestCommand` menyatakan **satu perintah tetap**. Begitu perintah yang benar bergantung
-pada keadaan sekarang, atribut sudah tidak cukup. Di situlah `Unrest:Query` masuk — dan di
-situlah kamu mulai menulis kode client di `src/game-client/`.
+`UnrestCommand` menyatakan **satu perintah tetap** yang berhenti di Bridge lokal. Begitu
+tombolnya harus mengirim paket, atau perintah yang benar bergantung pada keadaan sekarang,
+atribut sudah tidak cukup. Di situlah `Unrest:Query` masuk.
+
+Inilah seluruh tombol beli di game contoh, satu query untuk berapa pun banyaknya, dari
+`src/game-client/Shop.luau`:
 
 ```luau
-unrest:Query({
-    Tag = unrest.Tag,
-    Selector = "GuiButton",   -- is:A("GuiButton") -- TextButton dan ImageButton
-    Role = "ToggleMenu",
-}, {
-    Active = function(element)
-        if unrest.Bridge:Peek(Game.Channels.Greeting) == nil then
-            unrest:Dispatch(Game.Commands.Greet, "Halo")
-        else
-            unrest:Dispatch(Game.Commands.Greet, "Dah")
+unrest:Query({ Tag = unrest.Tag, Selector = "GuiButton", Role = "Beli" }, {
+    Active = function(element: Instance)
+        local item = element:GetAttribute("UnrestPayload")
+        if typeof(item) ~= "string" or item == "" then
+            warn(`[Shop] {element:GetFullName()} has no string UnrestPayload.`)
+            return
         end
+        GameNet.packets.Beli.send({ Barang = item })
+    end,
+
+    Hover = function(element: Instance)
+        (element :: GuiObject).BackgroundTransparency = 0.2
+    end,
+
+    Unhover = function(element: Instance)
+        (element :: GuiObject).BackgroundTransparency = 0
     end,
 })
 ```
 
-**`Role` jatuh balik ke `Instance.Name`.** Tombol yang namanya `ToggleMenu` cocok dengan
-query itu tanpa satu atribut pun. Dan kalau desainer nanti menamainya ulang jadi
-`Btn_04_final`, dia cukup mengisi `UnrestRole = "ToggleMenu"` dan query-nya tetap cocok.
-Karena itu, dalam descriptor pilih `Role`, bukan `Name`.
+Perhatikan pembagian kerjanya. Kode di atas tahu **cara** membeli; yang menentukan **apa**
+yang dibeli tetap `UnrestPayload` yang diketik desainer. Menambah tombol beli kesepuluh
+berarti menduplikasi satu tombol di Studio dan mengganti satu atribut — tidak ada baris kode
+baru.
+
+**`Role` jatuh balik ke `Instance.Name`.** Tombol yang namanya `Beli` cocok dengan query itu
+tanpa satu atribut pun. Dan kalau desainer nanti menamainya ulang jadi `Btn_04_final`, dia
+cukup mengisi `UnrestRole = "Beli"` dan query-nya tetap cocok. Karena itu, dalam descriptor
+pilih `Role`, bukan `Name`.
 
 Query adalah **ikatan hidup**, bukan pemindaian sekali jalan. Buat query sebelum elemennya
 ada, dan elemen yang ditandai sepuluh menit lagi akan terikat sepuluh menit lagi. Umurnya
@@ -400,29 +509,17 @@ milikmu: panggil `:Destroy()` pada handle-nya saat layar yang dilayaninya pergi.
 > diketik orang yang tidak sedang melihat jendela Output, dan menjatuhkan seluruh layar
 > karena itu jauh lebih buruk.
 
----
-
-## 10. Ganti transport-nya (opsional)
-
-Secara bawaan framework memakai remote Roblox biasa. Kalau kamu mau memakai ByteNet atau
-pustaka jaringan lain, pasang di antara `require` dan `:Start()`:
-
-```luau
-local Unrest = require(ReplicatedStorage.Unrest)
-Unrest:UseTransport(require(ReplicatedStorage.Game.Transport))
-local unrest = Unrest:Start()
-```
-
-Jendela waktunya nyata, bukan formalitas: memasangnya setelah `:Start()` akan melempar error,
-bukan diam-diam memindahkan separuh trafik. Lihat [API Transport](API-TRANSPORT.md).
+Kalau yang kamu bangun terdiri dari beberapa bagian yang baru berarti kalau lengkap — slider,
+sakelar — jangan menulis query sendiri. Pakai `Unrest.Widgets`, seperti `Slider.luau` dan
+`Toggle.luau` di `src/game-client/`. Lihat [API Widgets](API-WIDGETS.md).
 
 ---
 
 ## Selanjutnya
 
-* **[ModuleScript `Game`](GAME-MODULE.md)** — isi `src/game/` selengkapnya, dan apa yang
-  minimal harus kamu definisikan di sana.
+* **[Modul Bersama Game](GAME-MODULE.md)** — apa saja yang benar-benar harus kamu deklarasikan
+  di modul yang dibaca dua realm. Halaman pendek, dan itu memang kabar baik.
 * **[Peta API](API-OVERVIEW.md)** — setiap fungsi framework, satu per satu.
+* **[API Bridge](API-BRIDGE.md)** — publish/subscribe dan dispatch/handle, selengkapnya.
 * **[Referensi UI](UI-BINDING.md)** — atribut, handler, dan kelas apa mendukung apa.
-* **[Keamanan Remote](REMOTE-SECURITY.md)** — jalur penolakan, berurutan.
 * **[Pemecahan Masalah](TROUBLESHOOTING.md)** — pesan galat dan artinya.

@@ -2,8 +2,9 @@
   "languageMode": "strict",
   "aliases": {
     "Unrest": "src/shared",
-    "Server": "src/server",
-    "Client": "src/client",
+    "GameServer": "src/game-server",
+    "GameClient": "src/game-client",
+    "GameNet": "src/game-net",
     "Packages": "Packages"
   },
   "lint": {

@@ -31,22 +31,30 @@ Pinned versions:
 
 `default.project.json` maps the repository onto the Roblox DataModel:
 
-| Disk          | DataModel                                             |
-| ------------- | ----------------------------------------------------- |
-| `src/shared`  | `ReplicatedStorage.Unrest`                            |
-| `Packages`    | `ReplicatedStorage.Packages` (optional path)          |
-| `src/server`  | `ServerScriptService.UnrestServer`                    |
-| `src/client`  | `StarterPlayer.StarterPlayerScripts.UnrestClient`     |
+| Disk              | DataModel                                         |
+| ----------------- | ------------------------------------------------- |
+| `src/shared`      | `ReplicatedStorage.Unrest`                        |
+| `Packages`        | `ReplicatedStorage.Packages`                      |
+| `src/game-net`    | `ReplicatedStorage.GameNet`                       |
+| `src/game-server` | `ServerScriptService.Game`                        |
+| `src/game-client` | `StarterPlayer.StarterPlayerScripts.Game`         |
 
-`Packages` uses Rojo's optional-path form (`"$path": { "optional": "Packages" }`),
-so `rojo build` and `rojo sourcemap` still succeed on a fresh clone where
-`wally install` has not been run yet.
+Everything the game owns is prefixed `game-`; `src/shared` is the framework.
+The split is not cosmetic — the framework's own files were twice deleted by
+someone who believed they were game code.
+
+`Packages` is a required mount: the framework requires Scythe from it, so
+`wally install` has to have been run before the place will load.
+
+`bench.project.json` is the same tree plus `ReplicatedStorage.Bench` ->
+`bench/`. Benchmarks are built with it and never ship in a normal build.
 
 ## Build
 
 ```sh
 rojo build -o UnrestCoreSystem.rbxl        # place file
 rojo build -o UnrestCoreSystem.rbxm        # model file
+rojo build bench.project.json -o bench.rbxl   # place file with the benchmarks
 ```
 
 Build artifacts are gitignored.
@@ -61,7 +69,12 @@ Then connect with the Rojo plugin in Studio (default port 34872).
 
 ## Dependencies
 
-Declared in `wally.toml`; currently none.
+Declared in `wally.toml`. Two, and only one of them is the framework's:
+
+| Package | Who needs it |
+| --- | --- |
+| `synttx/scythe` | **the framework** — cleanup scopes, required in exactly one file, `src/shared/Util/Scope.luau` |
+| `elitriare/bytenet-max` | the game's own remotes in `src/game-net`. The framework never touches it. |
 
 ```sh
 wally install     # writes ./Packages and wally.lock
@@ -95,10 +108,11 @@ top of a module are kept alphabetically sorted.
 ## Type checking
 
 `.luaurc` sets `languageMode = "strict"` and defines path aliases used by
-luau-lsp: `@Unrest` -> `src/shared`, `@Server` -> `src/server`,
-`@Client` -> `src/client`, `@Packages` -> `Packages`. These aliases are resolved
-by luau-lsp / `luau-lsp analyze` for editor navigation and type checking only —
-Roblox's runtime `require` still takes an `Instance`, not a string.
+luau-lsp: `@Unrest` -> `src/shared`, `@GameServer` -> `src/game-server`,
+`@GameClient` -> `src/game-client`, `@GameNet` -> `src/game-net`,
+`@Packages` -> `Packages`. These aliases are resolved by luau-lsp /
+`luau-lsp analyze` for editor navigation and type checking only — Roblox's
+runtime `require` still takes an `Instance`, not a string.
 
 ```sh
 luau-lsp analyze --platform=roblox --sourcemap=sourcemap.json src

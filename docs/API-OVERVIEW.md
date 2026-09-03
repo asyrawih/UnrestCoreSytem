@@ -4,10 +4,10 @@ Halaman ini adalah daftar isi untuk bagian referensi API. Setiap nama di sini di
 langsung terhadap `src/shared/Types.luau`, yang merupakan sumber kebenaran permukaan publik
 framework.
 
-> **Tentang contohnya.** Nama seperti `Music.Play`, `Music.NowPlaying`, atau `MusicSystem`
-> yang muncul di halaman-halaman ini adalah **isi game contoh** di `src/game`, bukan API
-> framework. Framework tidak mendeklarasikan satu perintah, satu channel, satu preset, atau
-> satu sistem pun. Yang framework bawa cuma kata-kata umumnya: `System`, `Contracts`,
+> **Tentang contohnya.** Nama seperti `Toko.Beli`, `Koin`, atau `Dompet` yang muncul di
+> halaman-halaman ini adalah **isi game contoh** di `src/game-server` dan `src/game-client`,
+> bukan API framework. Framework tidak mendeklarasikan satu perintah, satu channel, satu
+> preset, atau satu sistem pun. Yang framework bawa cuma kata-kata umumnya: `System`,
 > `Bridge`, `Descriptor`.
 
 ---
@@ -26,20 +26,18 @@ Objek itu satu per runtime context. Ada satu di server, dan satu di setiap clien
 ```
 Unrest
 ├── Core       -- registry sistem dan siklus hidupnya
-├── Bridge     -- publish/subscribe, dispatch/invoke, batas jaringan
+├── Bridge     -- publish/subscribe dan dispatch/handle, bus lokal
 ├── Adapters   -- pengetahuan per-ClassName tentang UI Roblox
-└── Elements   -- adopsi UI Studio dan mesin query (client saja)
+├── Elements   -- adopsi UI Studio dan mesin query (client saja)
+├── Widgets    -- kontrol berbagian-banyak: slider, toggle (client saja)
+└── Scope      -- pustaka cleanup, di-export ulang supaya salinannya cuma satu
 ```
 
-Dua modul lagi di-`require` langsung, bukan lewat singleton:
+Satu modul lagi di-`require` langsung, bukan lewat singleton:
 
 ```luau
-local Contracts = require(ReplicatedStorage.Unrest.Net.Contracts)
 local Presets = require(ReplicatedStorage.Unrest.Presets)
 ```
-
-`Contracts` juga tersedia sebagai `Unrest.Bridge.Contracts` — objek yang sama persis, jadi
-tidak ada dua registry yang bisa berbeda pendapat.
 
 ---
 
@@ -47,14 +45,13 @@ tidak ada dua registry yang bisa berbeda pendapat.
 
 | Halaman | Isinya |
 | --- | --- |
-| [Unrest](API-UNREST.md) | Singleton-nya: `Start`, `Stop`, `IsStarted`, `Register`, `Get`, `Query`, `Dispatch`, `Invoke`, `UseTransport`, `OpenGateway`, dan field `Version`, `Context`, `Tag`, `Core`, `Bridge`, `Adapters`, `Elements` |
-| [Bridge](API-BRIDGE.md) | `Publish`, `Subscribe`, `Peek`, `Dispatch`, `Invoke`, `Handle`, `Destroy`, sinyal `Rejected` |
+| [Unrest](API-UNREST.md) | Singleton-nya: `Start`, `Stop`, `IsStarted`, `Register`, `Get`, `Query`, `Dispatch`, dan field `Version`, `Context`, `Tag`, `Core`, `Bridge`, `Adapters`, `Elements`, `Widgets`, `Scope` |
+| [Bridge](API-BRIDGE.md) | `Publish`, `Subscribe`, `Peek`, `Dispatch`, `Handle`, `Destroy` |
 | [Core](API-CORE.md) | `Register`, `Get`, `Expect`, `Has`, `List`, `Start`, `Stop`, `IsStarted`, dan tipe `System` |
 | [Elements & Query](API-ELEMENTS.md) | `ElementManager`, `Descriptor`, `QueryHandle`, `ManagedElement` |
+| [Widgets](API-WIDGETS.md) | `Each`, `Drag`, `WidgetSpec`, `WidgetParts`, `Scope` |
 | [Adapters](API-ADAPTERS.md) | `AdapterRegistry`, tipe `Adapter`, cara mendaftarkan kelas baru |
-| [Contracts](API-CONTRACTS.md) | `Declare`, `DeclareChannel`, `ArgumentSpec`, `CommandContract`, `ChannelContract` |
 | [Presets](API-PRESETS.md) | `Register`, `Get`, `List` |
-| [Transport](API-TRANSPORT.md) | `TransportProvider`, `ServerTransport`, `ClientTransport` |
 
 ---
 
@@ -65,28 +62,27 @@ Yang paling sering dipakai, dalam satu tabel.
 | Kamu mau | Tulis |
 | --- | --- |
 | Menyalakan framework | `local unrest = require(ReplicatedStorage.Unrest):Start()` |
-| Membuka gerbang (server saja) | `unrest:OpenGateway()` |
 | Mendaftarkan sistem | `unrest:Register(mySystem)` |
-| Mengambil sistem | `local music = unrest:Get("MusicSystem") :: GameTypes.MusicSystem` |
-| Mengirim niat, tanpa balasan | `unrest:Dispatch("Music.Play", "Lobby")` |
-| Mengirim niat, menunggu balasan | `local result = unrest:Invoke("Music.Play", "Lobby")` |
-| Memasang handler (di realm pemiliknya) | `unrest.Bridge:Handle("Music.Play", fn)` |
-| Menerbitkan state | `unrest.Bridge:Publish("Music.NowPlaying", "Lobby")` |
-| Berlangganan state | `unrest.Bridge:Subscribe("Music.NowPlaying", fn)` |
-| Membaca nilai terakhir sebuah channel | `unrest.Bridge:Peek("Music.NowPlaying")` |
-| Memilih elemen UI | `unrest:Query({ Tag = unrest.Tag, Role = "Play" }, { Active = fn })` |
-| Mendeklarasikan perintah | `Contracts:Declare({ Name = ..., Realm = "Server" })` |
-| Mendaftarkan preset | `Presets.Register("MusicToggle", { ... })` |
-| Mengganti transport | `Unrest:UseTransport(provider)` sebelum `:Start()` |
+| Mengambil sistem | `local dompet = unrest:Get("Dompet") :: Dompet.Dompet` |
+| Mengirim niat | `unrest:Dispatch("Toko.Beli", "Pedang")` |
+| Memasang handler | `unrest.Bridge:Handle("Toko.Beli", fn)` |
+| Menerbitkan state | `unrest.Bridge:Publish("Koin", 120)` |
+| Berlangganan state | `unrest.Bridge:Subscribe("Koin", fn)` |
+| Membaca nilai terakhir sebuah channel | `unrest.Bridge:Peek("Koin")` |
+| Memilih elemen UI | `unrest:Query({ Tag = unrest.Tag, Role = "Beli" }, { Active = fn })` |
+| Merakit slider / toggle | `unrest.Widgets:Each({ Required = { ... }, OnReady = fn })` |
+| Mendaftarkan preset | `Presets.Register("TombolUtama", { ... })` |
+| Membereskan koneksi sekaligus | `unrest.Scope.destroy(scope)` |
 
 ---
 
 ## Catatan pemanggilan
 
 **Titik dua, bukan titik.** Hampir semua yang ada di halaman-halaman ini adalah metode:
-`unrest:Start()`, `bridge:Publish(...)`, `Contracts:Declare(...)`. Dua pengecualian adalah
-modul `Presets` (`Presets.Register`, `Presets.Get`, `Presets.List`) dan fungsi bantu
-`Elements.describe`, yang keduanya dipanggil dengan titik.
+`unrest:Start()`, `bridge:Publish(...)`, `unrest.Widgets:Each(...)`. Pengecualiannya adalah
+modul `Presets` (`Presets.Register`, `Presets.Get`, `Presets.List`), fungsi bantu
+`Elements.describe`, dan seluruh `unrest.Scope` (`Scope.scope()`, `Scope.add(...)`,
+`Scope.destroy(...)`) — semuanya dipanggil dengan titik.
 
 **`Types.luau` adalah modul tipe saja.** Dia mengembalikan tabel kosong yang dibekukan. Kamu
 meng-`require`-nya untuk tipenya, bukan untuk nilainya:

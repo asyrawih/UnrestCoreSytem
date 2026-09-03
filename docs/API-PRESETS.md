@@ -35,7 +35,7 @@ Tabelnya kosong sejak awal, dan itu disengaja. Preset menyebut nama perintah ata
 dan nama itu milik game, bukan milik framework.
 
 Game mengisinya dengan `Presets.Register` saat startup, dan framework tidak perlu tahu apa
-yang masuk. Lihat [ModuleScript `Game`](GAME-MODULE.md).
+yang masuk. Lihat [Modul Bersama Game](GAME-MODULE.md).
 
 ---
 
@@ -67,8 +67,8 @@ salah.
 
 **Mendaftarkan nama yang sudah ada diizinkan, dan itu disengaja.** Game yang ingin salah satu
 presetnya berarti hal lain harus bisa menyatakannya di satu tempat. Ini kebalikan dari
-`Contracts:Declare`, yang menolak pengulangan — preset adalah kenyamanan tanpa makna
-keamanan, sementara nama perintah punya persis satu kebijakan.
+`Core:Register`, yang melempar error pada nama sistem yang terpakai dua kali — nama sistem
+adalah kunci registry, sementara nama preset cuma singkatan yang boleh ditulis ulang.
 
 ### `Presets.Get(name: string): Preset?`
 
@@ -118,9 +118,10 @@ preset, taruh yang berbeda di elemennya.
 
 ## Preset adalah singkatan, bukan hak istimewa
 
-Preset yang menyebut perintah yang tidak dideklarasikan kontraknya **tetap ditolak saat
-dispatch**, persis seperti `UnrestCommand` yang diketik tangan. Mendaftarkan preset tidak
-mengubah kode framework dan tidak memberi izin apa pun.
+Preset yang menyebut perintah yang tidak ada handler-nya berakhir persis seperti
+`UnrestCommand` yang diketik tangan: dispatch-nya jalan di bus lokal dan tidak ada yang
+menjawabnya. Mendaftarkan preset tidak mengubah kode framework dan tidak memberi izin apa pun —
+yang dilakukannya cuma mengisi beberapa atribut yang bisa saja diketik satu per satu.
 
 ---
 
