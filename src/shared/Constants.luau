@@ -24,7 +24,7 @@
 ]]
 
 local Constants = {
-    Version = "0.2.0",
+    Version = "0.2.1",
 
     --[[
         The CollectionService tag that hands an instance to the framework.

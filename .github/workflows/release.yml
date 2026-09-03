@@ -83,4 +83,24 @@ jobs:
           fi
           cd src/shared
           wally login --token "$WALLY_AUTH_TOKEN"
-          wally publish
+
+          # `wally publish` prints its failures to stdout and still exits 0. v0.2.0 was
+          # released that way: the registry rejected the token with `401 Unauthorized`,
+          # nothing reached Wally, and this step stayed green -- so the tag looked
+          # published for as long as nobody read the log. Read the log here instead.
+          wally publish 2>&1 | tee publish.log
+          if grep -qiE '^error[: ]' publish.log; then
+            echo "::error::wally publish failed -- see the output above. The package was NOT published."
+            exit 1
+          fi
+
+          # Belt and braces: ask the registry whether the version actually landed, so a
+          # future wally that fails silently *and* quietly is still caught.
+          version=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' wally.toml | head -1)
+          name=$(sed -n 's/^name = "\([^"]*\)".*/\1/p' wally.toml | head -1)
+          if ! curl -fsS "https://api.wally.run/v1/package-metadata/${name}" \
+            | grep -q "\"version\":\"${version}\""; then
+            echo "::error::${name}@${version} is not in the registry after publishing."
+            exit 1
+          fi
+          echo "::notice::Published ${name}@${version} to Wally."
