@@ -210,6 +210,14 @@ yang juga jadi jebakannya, karena keduanya bisa membungkamnya tanpa memutus apa 
 Ini **satu-satunya handler yang bisa diminta sebuah atribut** (lewat `UnrestCommand`), dan
 karena itu satu-satunya yang kegagalannya berupa peringatan, bukan error.
 
+Satu pengecualian, dan cuma satu: instance yang menyetel `UnrestWidget` adalah **akar widget**,
+dan `Elements` tidak mengikat apa pun untuk `UnrestCommand` maupun `UnrestChannel` di situ —
+keduanya milik control yang di-mount `Widgets` di akar itu, yang mengirimnya saat gerakan
+selesai, bukan saat akarnya diaktifkan. Akar `Frame` ber-`UnrestCommand` karena itu tidak
+memunculkan peringatan "tidak bisa diaktifkan" sama sekali, dan akar `TextButton` tidak
+mengirim apa pun saat diklik. Bagian-bagian di bawah akar tetap disambungkan seperti biasa.
+Lihat [Channel dan perintah di akar](API-WIDGETS.md#channel-dan-perintah-di-akar--slider-tanpa-luau).
+
 ### `Secondary`
 
 Aktivasi sekunder: `GuiButton.MouseButton2Click`, `ClickDetector.RightMouseClick`.

@@ -70,7 +70,7 @@ export type AttributeOrigin = AdapterTypes.AttributeOrigin
 export type AttributeSource = AdapterTypes.AttributeSource
 export type ManagedElement = AdapterTypes.ManagedElement
 export type ElementManager = AdapterTypes.ElementManager
-export type Descriptor = AdapterTypes.Descriptor
+export type Descriptor<Role = string, Group = string> = AdapterTypes.Descriptor<Role, Group>
 export type CompiledSelector = AdapterTypes.CompiledSelector
 export type QueryHandle = AdapterTypes.QueryHandle
 
@@ -170,11 +170,15 @@ export type SchemaCheck = Schemas.SchemaCheck
     `OnReady` is handed a cleanup scope. Put every connection the widget makes on it and the
     framework will undo them when the widget comes apart; a widget that is rebuilt then gets a
     fresh scope rather than a second set of live handlers on top of the first.
+
+    `Role` is string by default, so `WidgetSpec` written without arguments means what it always
+    meant. Game code holding a generated `Vocab` may narrow it -- `WidgetSpec<Vocab.Role>` --
+    and have the checker reject a role name that no screen spells.
 ]]
-export type WidgetSpec = {
+export type WidgetSpec<Role = string> = {
     --- May be left empty when `Widget` names a registered schema; the schema's roles are used.
-    Required: { string }?,
-    Optional: { string }?,
+    Required: { Role }?,
+    Optional: { Role }?,
     --[[
         When set, only groups whose root carries `UnrestWidget` equal to this name are
         accepted, and `Required` / `Optional` default to the schema registered under it.
@@ -210,6 +214,11 @@ export type WidgetGroupReport = {
     Widget: string?,
     --- The recipe this entry belongs to: its `Widget` name, or "Each #N" for a plain one.
     Recipe: string,
+    --- `UnrestChannel` resolved on the root: where a committed gesture is published, and
+    --- where an idle control follows. Nil when the root declares none.
+    Channel: string?,
+    --- `UnrestCommand` resolved on the root: what a committed gesture dispatches.
+    Command: string?,
     Present: { string },
     Missing: { string },
     Duplicates: { { Role: string, Kept: Instance, Ignored: Instance } },
@@ -233,6 +242,11 @@ export type WidgetReport = {
     came from the game is not something the player did; `Changed` is the other direction and
     fires for user gestures only. Neither of them ever fires at mount, which is what lets a
     rebuilt screen come back showing the value it had without announcing it as new.
+
+    `Changed` and `Committed` are the two moments of one gesture, and a control that has both
+    fires them in that order. `Changed` is "the player is moving this"; `Committed` is "the
+    player has finished". Only the second is worth sending anywhere that costs something, and
+    it is the moment the declarative wiring in `Widgets` publishes and dispatches on.
 ]]
 export type ControlHandle = {
     Get: (self: ControlHandle) -> any,
@@ -240,6 +254,12 @@ export type ControlHandle = {
     Set: (self: ControlHandle, value: any) -> (),
     --- User gestures only, never an echo of `Set`.
     Changed: Signal<any>,
+    --[[
+        Fires once when a gesture settles, at the value settled on: a drag released, a switch
+        pressed. Absent on a control with no gesture to settle -- a progress bar has neither.
+        A control that leaves it nil is treated as settling the moment it changes.
+    ]]
+    Committed: Signal<any>?,
 }
 
 --[[

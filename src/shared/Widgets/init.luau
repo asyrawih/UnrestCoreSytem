@@ -75,6 +75,23 @@
     `OnChange` is for gestures, and nothing about a rebuild is a gesture. Only the first mount
     of a group reads `Initial`.
 
+    THE ROOT MAY ALSO SAY WHERE THE VALUE GOES. `UnrestChannel` and `UnrestCommand` on a
+    widget root are wired here rather than in `Elements`, because the value of a slider is
+    the value of several instances and a gesture with a beginning and an end, not one property
+    of the root Frame. That makes a slider declarable exactly like a button is: three
+    attributes in Studio and no Luau at all. The framework still spells no name -- the name
+    comes off an attribute the designer typed, which is the same routing `Elements` does.
+
+    WHO OWNS THE PAINT, AND FOR HOW LONG. A control that is idle follows its channel: a value
+    published anywhere paints it. From the first `Changed` of a gesture until the `Committed`
+    that ends it, the gesture owns the paint and arriving values are dropped -- a knob must
+    not jump out from under a finger. On commit the control publishes once, and is following
+    again immediately afterwards. The bus is synchronous, so that publish comes straight back
+    round to this mount's own subscriber; it is recognised by the value being the one just
+    sent and ignored, which is cheaper and more honest than a flag that has to be cleared on
+    a later frame. Nothing is ever published at mount, on a repaint, or from `Set`: publishing
+    is a thing the player did.
+
     A REPORT, NOT MORE WARNINGS. `Report` and `Explain` answer "why is my widget not wired"
     out of the books this file already keeps: what each recipe found, what it is still
     missing, which duplicates it ignored, and which elements could not join a group at all.
@@ -231,14 +248,67 @@ local function rootOf(instance: Instance): Instance?
     return rootIn(Selector.resolution(instance))
 end
 
---- The schema a root says its group plays. Never inherited, never from a preset: `Constants`
---- keeps `UnrestWidget` out of both, because a widget is a thing, not a default.
-local function widgetOn(root: Instance): string?
-    local name = root:GetAttribute(Constants.Attributes.Widget)
-    if typeof(name) == "string" and #name > 0 then
-        return name
+--[[
+    The schema a root says its group plays. `Selector.widgetOn` is the one place that is read,
+    because `Elements` and `Tooling/Lint` ask the same question about the same attribute --
+    `Elements` to leave the root's command and channel to this file, `Lint` to say the same
+    thing in edit mode. Never inherited, never from a preset: `Constants` keeps `UnrestWidget`
+    out of both, because a widget is a thing, not a default.
+]]
+local widgetOn = Selector.widgetOn
+
+--[[
+    A string attribute of the root, resolved the way every other attribute in the framework
+    is: own, then preset, then -- for neither of these two, which are not inheritable -- an
+    ancestor. So a preset may supply the channel, and twenty sliders built from one preset are
+    wired by the one line that names it.
+]]
+local function stringOn(root: Instance, name: string): string?
+    local value = Selector.attributeOf(root, name)
+    if typeof(value) == "string" and #value > 0 then
+        return value
     end
     return nil
+end
+
+--[[
+    Hoisted so the `pcall` below is handed a function and its arguments rather than a closure
+    that captures them; the same shape, and for the same reason, as `assign` in `Elements`.
+]]
+local function put(handle: Types.ControlHandle, value: any): ()
+    handle:Set(value)
+end
+
+--[[
+    Paints a value that arrived from the bus.
+
+    A control decides what it can hold -- a Toggle raises on anything but a boolean -- and the
+    value on a channel is data published by code this file has never seen. That is the
+    attribute half of "code raises, attributes warn": the wiring was typed in Studio, so a
+    value it cannot take names the group, the channel and the type, and the screen stays up.
+]]
+local function paint(handle: Types.ControlHandle, group: string, channel: string, value: any): ()
+    local ok, err = pcall(put :: any, handle, value)
+    if not ok then
+        warn(
+            `[Unrest.Widgets] group "{group}" could not take the {typeof(value)} published on `
+                .. `"{channel}": {tostring(err)}. Publish a value the control accepts, or take `
+                .. `{Constants.Attributes.Channel} off the root.`
+        )
+    end
+end
+
+--- The sentence `Explain` adds for a root that wires its control to the bus. One sentence
+--- rather than two, because a root may carry both halves and they are one arrangement.
+local function routing(group: string, channel: string?, command: string?): string
+    local clauses: { string } = {}
+    if channel ~= nil then
+        table.insert(clauses, `follows the channel "{channel}" and publishes to it on commit`)
+    end
+    if command ~= nil then
+        table.insert(clauses, `dispatches "{command}" on commit`)
+    end
+    return `[Unrest.Widgets] group "{group}" {table.concat(clauses, ", and ")}.`
 end
 
 --[[
@@ -369,7 +439,18 @@ local function gesture<Value>(
     return live
 end
 
-function Widgets.new(elements: Types.ElementManager, tag: string, context: Types.RuntimeContext): Types.WidgetLibrary
+--[[
+    The `Bridge` is here for exactly one job: routing a channel and a command that a *root*
+    names, on behalf of the control mounted there. It is held by the library and never handed
+    to a control -- `Mount` is given the library and nothing else, so a control has no bus in
+    reach and cannot spell a game's name even by accident.
+]]
+function Widgets.new(
+    elements: Types.ElementManager,
+    tag: string,
+    context: Types.RuntimeContext,
+    bridge: Types.Bridge
+): Types.WidgetLibrary
     local recipes: { Recipe } = {}
     --- Counts every `Each` ever registered, so "Each #3" names the same recipe all run long.
     local registered = 0
@@ -1021,12 +1102,130 @@ function Widgets.new(elements: Types.ElementManager, tag: string, context: Types
     end
 
     --[[
+        Wires one mounted control to the bus, when its root says where to.
+
+        This is the whole of "a slider declared in Studio works with no Luau". The names are
+        the designer's: `UnrestChannel` says where the value lives, `UnrestCommand` says what a
+        settled gesture asks for, and neither is ever spelled by the framework -- routing a
+        name an attribute supplied is exactly what `Elements` does for a button.
+
+        THREE RULES, AND THEY ARE THE WHOLE CONTRACT.
+
+        1. Publishing is a gesture, never anything else. A mount, a repaint, a value carried
+           over from a rebuilt screen and a `Set` from game code all paint in silence. Only
+           `Committed` publishes -- or `Changed`, for a control whose gesture has no separate
+           end, which is what a nil `Committed` means.
+        2. While a gesture is in flight the gesture owns the paint. `holding` is set on the
+           first `Changed` and cleared by the `Committed` that ends it, and values arriving in
+           between are dropped: a knob that jumped to a value published mid-drag would be
+           fighting the finger holding it. After the commit the control follows again, one
+           call later.
+        3. A mount ignores its own echo. The bus is synchronous, so `Publish` reaches this
+           mount's own subscriber before it returns; the value being the one just sent is how
+           that is recognised, which needs no frame to elapse and no flag to be cleared later.
+
+        The seed is `Peek` rather than a wait for the retained value `Subscribe` replays,
+        because that replay arrives on its own thread a resumption later and the control would
+        show a stale value until it did. A channel with nothing on it seeds nothing, and the
+        value the group was left at -- painted by `drive` just above -- stands.
+
+        EDITING THE ROOT REWIRES IT, because that is what every other attribute in the
+        framework does and a widget root is the one element `Elements` is not doing it for.
+        The whole routing hangs off a scope of its own inside the mount's, so typing a channel
+        in Studio while the game runs builds one and clearing it takes one away, with no
+        rebuild of the control itself. The two watches are installed whether or not the root
+        says anything today: the edit worth catching is the first one.
+    ]]
+    local function route(handle: Types.ControlHandle, group: string, root: Instance?, scope: Types.Scope): ()
+        if root == nil then
+            return
+        end
+        local declared: Instance = root
+
+        --- Everything one reading of the root's attributes put up. Cleaned and rebuilt when
+        --- they are edited; destroyed with the mount.
+        local wiring = Scope.add(scope, Scope.scope())
+
+        local function wire(): ()
+            Scope.clean(wiring)
+
+            local channel = stringOn(declared, Constants.Attributes.Channel)
+            local command = stringOn(declared, Constants.Attributes.Command)
+            if channel == nil and command == nil then
+                return
+            end
+
+            --- True from the first `Changed` of a gesture until the `Committed` that ends it.
+            local holding = false
+            --- The value being published right this instant, so its echo is not painted.
+            local echo: any = nil
+
+            if channel ~= nil then
+                local named: string = channel
+                local seed = bridge:Peek(named)
+                if seed ~= nil then
+                    paint(handle, group, named, seed)
+                end
+
+                Scope.add(
+                    wiring,
+                    bridge:Subscribe(named, function(value: any)
+                        if holding or value == echo then
+                            return
+                        end
+                        paint(handle, group, named, value)
+                    end)
+                )
+            end
+
+            --- The end of a gesture: the value leaves, and the control follows again.
+            local function settled(value: any): ()
+                holding = false
+                if channel ~= nil then
+                    echo = value
+                    bridge:Publish(channel :: string, value)
+                    echo = nil
+                end
+                if command ~= nil then
+                    bridge:Dispatch(command :: string, value)
+                end
+            end
+
+            local committed = handle.Committed
+            Scope.add(
+                wiring,
+                handle.Changed:Connect(function(value: any)
+                    if committed == nil then
+                        settled(value)
+                        return
+                    end
+                    holding = true
+                end)
+            )
+            if committed ~= nil then
+                Scope.add(wiring, committed:Connect(settled))
+            end
+        end
+
+        wire()
+        Scope.addBulk(
+            scope,
+            declared:GetAttributeChangedSignal(Constants.Attributes.Channel):Connect(wire),
+            declared:GetAttributeChangedSignal(Constants.Attributes.Command):Connect(wire)
+        )
+    end
+
+    --[[
         Mounts one group of one control, and arranges for its value to outlive the mount.
 
         The snapshot is a cleanup function rather than a subscription to `Changed`, and that is
         the whole reason it is right: `Changed` only knows about gestures, while what has to
         survive is the value whatever it came from -- a drag, a `Set` from the game, an
         `Initial`. Reading it on the way down catches all three with one closure.
+
+        The routing goes on last, so nothing on the bus can reach a mount the books do not yet
+        know about, and comes off first, because the scope disposes in the order a scope
+        disposes: the subscription is gone before the value is snapshotted.
     ]]
     local function drive(registration: Registration, group: string, parts: Types.WidgetParts, scope: Types.Scope): ()
         local handle = registration.Control.Mount(typed, group, parts, scope, registration.Config[group])
@@ -1060,6 +1259,7 @@ function Widgets.new(elements: Types.ElementManager, tag: string, context: Types
                 touched = true
             end,
             Changed = handle.Changed,
+            Committed = handle.Committed,
         }
 
         registration.Live[group] = given
@@ -1073,6 +1273,8 @@ function Widgets.new(elements: Types.ElementManager, tag: string, context: Types
                 registration.Mounted[group] = nil
             end
         end)
+
+        route(handle, group, sharedRoot(instancesIn(parts)), scope)
     end
 
     --[[
@@ -1422,6 +1624,10 @@ function Widgets.new(elements: Types.ElementManager, tag: string, context: Types
                     Group = group,
                     Root = root,
                     Widget = if root ~= nil then widgetOn(root) else nil,
+                    --- Read off the root rather than out of the mount, so a group that never
+                    --- assembled still shows the wiring it was meant to have.
+                    Channel = if root ~= nil then stringOn(root, Constants.Attributes.Channel) else nil,
+                    Command = if root ~= nil then stringOn(root, Constants.Attributes.Command) else nil,
                     Recipe = recipe.Label,
                     Present = rolesIn(parts),
                     Missing = missingIn(recipe, parts),
@@ -1453,7 +1659,16 @@ function Widgets.new(elements: Types.ElementManager, tag: string, context: Types
         end
 
         local held = elementsOf(group)
-        if #held > 0 and sharedRoot(held) == nil then
+        local root = if #held > 0 then sharedRoot(held) else nil
+        if root ~= nil then
+            --- Where the value goes, which is the other half of "why does nothing happen when
+            --- I drag this" and is written on an instance nobody thinks to look at.
+            local channel = stringOn(root, Constants.Attributes.Channel)
+            local command = stringOn(root, Constants.Attributes.Command)
+            if channel ~= nil or command ~= nil then
+                table.insert(lines, routing(group, channel, command))
+            end
+        elseif #held > 0 then
             table.insert(
                 lines,
                 `[Unrest.Widgets] group "{group}" has no shared root: every part sets its own `

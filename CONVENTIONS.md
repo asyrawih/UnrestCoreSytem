@@ -41,8 +41,8 @@ selene src && stylua --check src
   manager behind it). Requiring Scythe anywhere else, by any path, reintroduces the second copy.
   Adding a second dependency needs a reason of the same size.
 - **Three project files, three audiences.** `default.project.json` is what you develop against;
-  `bench.project.json` adds `bench/`; `model.project.json` is the framework alone plus the
-  vendored Scythe, and is what the Creator Store model is built from. `src/shared/wally.toml`
+  `model.project.json` is the framework alone plus the vendored Scythe, and is what the
+  Creator Store model is built from; `plugin/default.project.json` is the Studio plugin. `src/shared/wally.toml`
   is the publishable manifest — the root one is `private` and exists only for `wally install`.
 - **`vendor/Scythe.luau` is a verbatim MPL-2.0 copy and must stay verbatim.** It is excluded
   from stylua and selene (`.styluaignore`, `selene.toml`) for that reason, not by oversight.
@@ -53,7 +53,7 @@ selene src && stylua --check src
   to match.
 - **CI is `.github/workflows/ci.yml`** and runs exactly the three checks above plus the two
   invariants no tool can see: the version pair, and that `model.project.json` picks up nothing
-  from `src/game-*` or `bench/`. The setup shared with the release workflow lives in
+  from `src/game-*` or `plugin/`. The setup shared with the release workflow lives in
   `.github/actions/setup`; do not inline a second copy of it.
 - No `wait()` / `spawn()` / `delay()` — use `task.*`.
 - stylua: 4 spaces, width 120, `call_parentheses = "Always"`, `sort_requires` on (requires
@@ -86,6 +86,13 @@ selene src && stylua --check src
 - An attribute is **not a second mechanism**. `UnrestCommand` goes through the same
   `Bridge:Dispatch` as hand-written Luau and reaches the same handlers, so a screen wired in
   Studio and one wired in code are indistinguishable from the far side of the Bridge.
+  There is exactly **one element `Elements` does not wire**, and it is worth knowing about: an
+  instance that sets `UnrestWidget` is the root of a widget, and its `UnrestCommand` and
+  `UnrestChannel` are routed by `Widgets` through the control mounted there instead — a
+  slider's value is several instances and a gesture with an end, not one property of a Frame.
+  `Selector.isWidgetRoot` is the predicate and `Elements`, `Widgets` and `Tooling/Lint` all
+  ask it rather than re-deriving it. The far side of the Bridge still cannot tell: it is the
+  same `Publish` and the same `Dispatch`, on a name the designer typed.
 - Layer map: `Core` (never touches an Instance) -> `Bridge` -> `Elements` (never touches a
   system). The `Bridge` is a **local bus**: `Publish`/`Subscribe`/`Peek` one way,
   `Dispatch`/`Handle` the other, retained channels, and nothing that crosses a machine.
@@ -108,8 +115,8 @@ selene src && stylua --check src
   and the reader that matters here is a Studio plugin in a place where nothing has started.
   The arrow points one way: `Tooling` may require the runtime's pure layers, and no runtime
   file may require `Tooling`. The future `plugin/` follows the same rule one level up — its
-  own Rojo project, built to a `.rbxm` and installed into Studio, and like `bench` it is
-  **never** mounted in `default.project.json`.
+  own Rojo project, built to a `.rbxm` and installed into Studio, and it is **never** mounted
+  in `default.project.json`.
 - **A tag outlives its instance.** `Destroy()` takes an instance out of
   `CollectionService:GetTagged` but leaves the tag on it, so `HasTag` answers `true` forever
   after. `Selector.isManaged` therefore asks `IsDescendantOf(game)` first: managed means

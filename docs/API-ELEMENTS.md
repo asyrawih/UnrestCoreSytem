@@ -59,16 +59,20 @@ panggil `:Destroy()` saat layar yang dilayaninya pergi.
 ## `Descriptor` — cara memilih elemen
 
 ```luau
-export type Descriptor = {
+export type Descriptor<Role = string, Group = string> = {
     Tag: string?,
     Selector: string?,
     Name: string?,
-    Role: string?,
-    Group: string?,
+    Role: Role?,
+    Group: Group?,
     Ancestor: Instance?,
     Recursive: boolean?,
 }
 ```
+
+Dua parameter tipe itu bawaannya `string`, jadi tabel di bawah adalah bentuk bawaannya —
+`Descriptor` yang ditulis tanpa argumen. Yang mau string harfiahnya diperiksa mengisinya;
+[bagian generiknya](#descriptorrole-group--kalau-kamu-sudah-punya-vocab) ada di bawah.
 
 | Field | Tipe | Arti |
 | --- | --- | --- |
@@ -103,6 +107,65 @@ buruk daripada tidak mengadopsinya sama sekali.
 
 **Hanya tag milik framework yang menurun.** `Tag = "Highlighted"` tetap berarti persis
 instance yang membawa tag itu. Tag asing adalah label, bukan pendaftaran.
+
+### `Descriptor<Role, Group>` — kalau kamu sudah punya `Vocab`
+
+`Role = "SilderKnob"` adalah query yang diam-diam tidak pernah cocok: bentuk tabelnya benar,
+nama kuncinya benar, dan `string` menerima apa saja. Dua parameter tipe pada `Descriptor`
+menutup lubang itu untuk yang menginginkannya. Isinya union dari `Vocab.luau` — file yang
+dihasilkan dari layar yang benar-benar ada, oleh [plugin Studio](PLUGIN.md) atau
+`studio/ExportVocab.luau`:
+
+```luau
+local Types = require(ReplicatedStorage.Unrest.Types)
+local Vocab = require(script.Parent.Vocab)
+
+local knob: Types.Descriptor<Vocab.Role, Vocab.Group> = {
+    Tag = unrest.Tag,
+    Role = "SliderKnob",
+    Group = "Musik",
+}
+
+unrest:Query(knob, {
+    Hover = function(element)
+        element.Instance.BackgroundTransparency = 0
+    end,
+})
+```
+
+Ganti satu huruf jadi `Role = "SilderKnob"` dan `luau-lsp` 1.69.0 menggarisbawahi baris
+deklarasinya, bukan baris query-nya:
+
+```
+TypeError: Expected this to be exactly
+	'Descriptor<"PlayerMenu" | ... | "SliderKnob" | "SliderLabel" | "SliderTrack" | ..., "Efek" | "Fullscreen" | "Musik" | "Notifikasi">'
+but got
+	'{| Role: "SilderKnob", Tag: string? |}'
+caused by:
+  Property 'Role' is not compatible.
+Expected this to be exactly
+	'("PlayerMenu" | ... | "SliderKnob" | ...)?'
+but got
+	'"SilderKnob"'
+```
+
+Empat hal yang perlu diketahui:
+
+- **Ini opsional dan aditif.** `Types.Descriptor` tanpa argumen tetap berarti
+  `Descriptor<string, string>`. `unrest:Query({ Tag = "Unrest", Role = "SliderKnob" })` dengan
+  string harfiah polos tetap sah selamanya, dan tidak ada satu pun kode lama yang perlu
+  disentuh.
+- **Yang sempit tetap muat ke API yang lebar.** Descriptor bertipe
+  `Descriptor<Vocab.Role, Vocab.Group>` diserahkan apa adanya ke `Unrest:Query`,
+  `Elements:Query`, dan `Elements:Explain` — semuanya menerima bentuk bawaan, dan properti
+  tabel di Luau bersifat kovarian, jadi tidak perlu cast apa pun di tempat panggilan.
+- **Runtime tidak ikut berubah.** `Resolver` tetap memvalidasi *bentuk* descriptor, bukan
+  kosakatanya, dan `Selector.parse` / `CompiledSelector` tidak tahu-menahu soal parameter
+  tipe. Pemeriksaan ini hidup di editor dan di CI, tidak di dalam game.
+- **`Vocab` disegarkan, bukan disunting.** Peran yang baru diketik desainer di Studio belum
+  ada di union sampai file itu diekspor ulang; itu memang harga dari kosakata yang dihasilkan.
+  Kalau kamu belum siap membayarnya, `Vocab.Roles.SliderKnob` sebagai *nilai* sudah memberi
+  autocomplete dan menangkap salah ketik tanpa satu pun parameter tipe.
 
 ---
 

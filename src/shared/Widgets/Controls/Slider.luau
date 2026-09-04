@@ -34,7 +34,11 @@
 
     CHANGE AND COMMIT ARE DIFFERENT MOMENTS. A drag fires `OnChange` on every move, because a
     volume slider is being listened to while it is dragged, and `OnCommit` once, on the value
-    the player settled on, because anything that costs something wants only that one.
+    the player settled on, because anything that costs something wants only that one. The
+    handle says the same thing twice over, through `Changed` and `Committed`: a config is what
+    one caller asked for, the two signals are what anybody may watch -- and they are what tells
+    `Widgets` when a gesture starts and when it ends, which is the whole of the rule about who
+    owns the paint while a finger is down.
 
     FRACTIONS, NOT PERCENTAGES. A position along a track is 0..1. Whole percent is a
     presentation choice and belongs to whoever is presenting.
@@ -83,6 +87,10 @@ local Slider: Types.Control<SliderConfig> = {
 
         local changed: Types.Signal<any> = Signal.new(`Widgets.Slider[{group}]`)
         Scope.add(scope, changed)
+        --- The other end of the same gesture: one fire, on release, at the value settled on.
+        --- What `OnCommit` is told, told to the framework as well -- see `Widgets`'s routing.
+        local committed: Types.Signal<any> = Signal.new(`Widgets.Slider[{group}].Committed`)
+        Scope.add(scope, committed)
 
         local fraction = if settings.Initial ~= nil
             then SliderPaint.fraction(settings.Initial, `Slider config for group "{group}" (Initial)`)
@@ -111,6 +119,7 @@ local Slider: Types.Control<SliderConfig> = {
                 end
             end, function(settled: number)
                 fraction = settled
+                committed:Fire(fraction)
 
                 local onCommit = settings.OnCommit
                 if onCommit ~= nil then
@@ -136,6 +145,7 @@ local Slider: Types.Control<SliderConfig> = {
             end,
 
             Changed = changed,
+            Committed = committed,
         }
     end,
 }

@@ -202,8 +202,8 @@ Ini aturan yang sama dengan yang berlaku untuk `src/shared/Tooling/` sendiri, sa
 atasnya.
 
 Panahnya searah: `plugin/` boleh membaca framework, dan **tidak ada** file di `src/` yang boleh
-tahu plugin ini ada. `plugin/` adalah proyek Rojo sendiri dan, seperti `bench/`, tidak pernah
-dipasang di `default.project.json`.
+tahu plugin ini ada. `plugin/` adalah proyek Rojo sendiri dan tidak pernah dipasang di
+`default.project.json`.
 
 ---
 

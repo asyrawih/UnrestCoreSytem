@@ -61,13 +61,10 @@ jobs:
             exit 1
           fi
 
-      # ---- all three project files, because each has a different audience ----
+      # ---- both project files, because each has a different audience ----
 
       - name: Build the place
         run: rojo build default.project.json --output /tmp/place.rbxl
-
-      - name: Build the benchmark place
-        run: rojo build bench.project.json --output /tmp/bench.rbxl
 
       - name: Build the distributable model
         run: rojo build model.project.json --output Unrest.rbxm
@@ -77,9 +74,9 @@ jobs:
         # whoever installed it, not by us.
         run: |
           rojo sourcemap model.project.json --output /tmp/model.json
-          if grep -qE '"(src/game-|bench/)' /tmp/model.json; then
-            echo "::error::model.project.json picked up game or benchmark code."
-            grep -oE '"[^"]*(src/game-|bench/)[^"]*"' /tmp/model.json | sort -u
+          if grep -qE '"(src/game-|plugin/)' /tmp/model.json; then
+            echo "::error::model.project.json picked up game or plugin code."
+            grep -oE '"[^"]*(src/game-|plugin/)[^"]*"' /tmp/model.json | sort -u
             exit 1
           fi
 

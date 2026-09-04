@@ -46,6 +46,9 @@ local function buat(nama: string, y: number)
     --- Akarnya menyebut skema yang dimainkan grup ini. Dibaca `Widgets:Report()` dan resep
     --- `Each({ Widget = "Toggle" })`; tidak diwariskan, jadi tempatnya memang di sini.
     akar:SetAttribute("UnrestWidget", "Toggle")
+    --- Ke mana state-nya pergi. Milik control-nya, bukan Frame ini: setiap tekan menerbitkan
+    --- sekali ke channel ini, dan nilai yang diterbitkan dari mana pun melukis switch-nya.
+    akar:SetAttribute("UnrestChannel", "Toggle." .. nama)
 
     local label = Instance.new("TextLabel")
     label.Name = "Label"

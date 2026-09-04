@@ -62,13 +62,15 @@ local context: Types.RuntimeContext = if RunService:IsServer() then "Server" els
       Adapters is pure per-class knowledge;
       Elements adopts Studio UI, so it needs an adapter registry to resolve classes with
                and a Bridge to route `UnrestCommand` attributes through;
-      Widgets  groups adopted elements into controls, so it needs Elements to query through.
+      Widgets  groups adopted elements into controls, so it needs Elements to query through --
+               and the same Bridge, for the `UnrestChannel` and `UnrestCommand` a widget root
+               carries, which are the control's rather than the root instance's.
     Nothing points back up, so there is no cycle to break.
 ]]
 local bridge = BridgeFactory.new(context)
 local adapters = AdaptersFactory.new()
 local elements = ElementsFactory.new(adapters, bridge)
-local widgets = WidgetsFactory.new(elements, Constants.Tag, context)
+local widgets = WidgetsFactory.new(elements, Constants.Tag, context, bridge)
 local core = CoreFactory.new()
 
 local Unrest = {

@@ -20,8 +20,10 @@
     bawahnya ikut memilikinya tanpa diketik ulang. Itulah identitas yang membedakan satu
     slider dari yang lain.
 
-    Perhatikan tidak ada `UnrestChannel` sama sekali di sini. Menduplikasi slider berarti
-    mengganti SATU atribut, yaitu Group-nya.
+    Di akar juga ada `UnrestChannel`, dan itulah yang membuat slider ini hidup tanpa satu
+    baris Luau pun: nilainya diambil dari channel saat mount, diterbitkan sekali saat geseran
+    dilepas, dan selama jari masih menempel nilai yang datang dari channel diabaikan.
+    Menduplikasi slider berarti mengganti DUA atribut di akar, Group dan Channel-nya.
 ]]
 
 local CollectionService = game:GetService("CollectionService")
@@ -52,6 +54,13 @@ local function buatSlider(nama: string, y: number)
     --- Akarnya menyebut skema yang dimainkan grup ini. Dibaca `Widgets:Report()` dan resep
     --- `Each({ Widget = "Slider" })`; tidak diwariskan, jadi tempatnya memang di sini.
     akar:SetAttribute("UnrestWidget", "Slider")
+    --[[
+        Dan ke mana nilainya pergi. Karena akarnya ber-`UnrestWidget`, channel ini milik
+        control-nya, bukan milik Frame ini: `Elements` tidak menyentuhnya, `Widgets` yang
+        berlangganan dan menerbitkan sekali saat geseran dilepas. Ini satu-satunya baris yang
+        membuat slider ini bekerja -- tidak ada Luau sama sekali di sisi game.
+    ]]
+    akar:SetAttribute("UnrestChannel", "Volume." .. nama)
 
     local judul = Instance.new("TextLabel")
     judul.Name = "Judul"

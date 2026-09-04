@@ -68,6 +68,7 @@ local Directory = require(script.Directory)
 local Info = require(script.Info)
 local RevealFactory = require(script.Reveal)
 local Types = require(ReplicatedStorage.Unrest.Types)
+local Vocab = require(script.Parent.Vocab)
 
 --- Out is quicker than in on purpose: opening is the thing the player asked to look at.
 local OPEN = TweenInfo.new(0.25, Enum.EasingStyle.Quint, Enum.EasingDirection.Out)
@@ -140,7 +141,7 @@ return function(unrest: Types.Unrest): Types.Cleanup
     local closers = unrest:Query({
         Tag = unrest.Tag,
         Selector = "GuiButton",
-        Role = "ServerListClose",
+        Role = Vocab.Roles.ServerListClose,
         Ancestor = playerGui,
     }, {
         --- Closing is a state, not a second animation: the same boolean the toggle writes.
@@ -152,7 +153,7 @@ return function(unrest: Types.Unrest): Types.Cleanup
     local buttons = unrest:Query({
         Tag = unrest.Tag,
         Selector = "GuiButton",
-        Role = "ServerListButton",
+        Role = Vocab.Roles.ServerListButton,
         Ancestor = playerGui,
     }, {
         --[[

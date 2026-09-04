@@ -45,4 +45,3 @@ plugin/plugin-sourcemap.json
 node_modules/
 /build
 graphify-out
-bench

@@ -87,6 +87,14 @@
     entirely in Studio and one wired entirely in code are indistinguishable from the far
     side of the Bridge.
 
+    THE ONE ELEMENT THIS MODULE DOES NOT WIRE is the root of a widget -- an instance that sets
+    `UnrestWidget`. Its `UnrestCommand` and `UnrestChannel` name the value of a whole control,
+    which is several instances and a gesture with a beginning and an end, so `Widgets` routes
+    them through the control it mounts there and this module leaves both alone. Everything
+    else about the root is adopted exactly as usual, and every other element -- including every
+    part *of* that widget -- is wired here as it always was. `Selector.isWidgetRoot` is the
+    predicate, asked here, in `Widgets` and in `Tooling/Lint` so the three cannot disagree.
+
     ---------------------------------------------------------------------------
     Resolution: three layers, most specific wins
     ---------------------------------------------------------------------------
@@ -167,6 +175,18 @@ local WATCHED: { string } = {
     ATTRIBUTES.Format,
     ATTRIBUTES.Cooldown,
     ATTRIBUTES.Preset,
+    --[[
+        Not wired here at all: it is read so that setting or clearing it re-runs this
+        element's wiring, because it decides whether `UnrestCommand` and `UnrestChannel` on
+        this element belong to this element or to the control `Widgets` mounts on it.
+    ]]
+    ATTRIBUTES.Widget,
+}
+
+--- The two attributes a widget root does not wire here. See `wireCommand`.
+local ROOT_OWNED: { [string]: boolean } = {
+    [ATTRIBUTES.Command] = true,
+    [ATTRIBUTES.Channel] = true,
 }
 
 --[[
@@ -352,6 +372,10 @@ end
 
     `element.Attributes` says what the element ended up with; this says who decided, which
     is the question a designer actually has when a button does something they never typed.
+
+    An attribute this manager resolved but deliberately did not wire says so as well, because
+    "resolved" and "wired" are the same thing everywhere else in this file and a widget root
+    is the one place they come apart.
 ]]
 function Elements.describe(element: Types.ManagedElement): string
     local names: { string } = {}
@@ -360,10 +384,14 @@ function Elements.describe(element: Types.ManagedElement): string
     end
     table.sort(names)
 
+    local root = Selector.isWidgetRoot(element.Instance)
     local parts: { string } = {}
     for _, name in names do
         local source = element.Sources[name]
         local origin = if source ~= nil then source.Text else "set here"
+        if root and ROOT_OWNED[name] then
+            origin ..= ", widget root"
+        end
         table.insert(parts, `{name} = {tostring(element.Attributes[name])} ({origin})`)
     end
 
@@ -422,11 +450,22 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         `UnrestCooldown` is a debounce and nothing more. It exists so a designer can stop a
         button double-firing on a fat-fingered double click; it lives entirely in this
         element's memory and is forgotten when the element is released.
+
+        THE ONE EXCEPTION IN THIS FILE. An element that sets `UnrestWidget` is the root of a
+        widget, and its command belongs to the control `Widgets` mounts there: a slider sends
+        its command once, at the value the player settled on, which is a moment only the
+        control knows about. Wiring it here as well would send it a second time on whatever
+        the class happens to call activation, and on a `Frame` -- the usual shape of a root --
+        it would only ever produce the hint that a Frame cannot be activated. Left alone, and
+        `Widgets` says so; the same predicate answers it there and in `Tooling/Lint`.
     ]]
     local function wireCommand(element: Types.ManagedElement, scope: Types.Scope): ()
         local instance = element.Instance
         local command = readString(element.Attributes, ATTRIBUTES.Command)
         if command == nil then
+            return
+        end
+        if Selector.isWidgetRoot(instance) then
             return
         end
 
@@ -457,11 +496,18 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         designer did not say (so a TextLabel with only a channel writes its Text, which is
         what they meant). It must be on the adapter's `Bindable` allowlist either way: a
         published value is never permitted to write an arbitrary property.
+
+        A widget root is skipped for the same reason its command is: the value on that channel
+        is the control's whole value, and painting it means moving a knob along a track, not
+        writing one property of the root Frame. `Widgets` subscribes instead.
     ]]
     local function wireChannel(element: Types.ManagedElement, scope: Types.Scope): ()
         local instance = element.Instance
         local channel = readString(element.Attributes, ATTRIBUTES.Channel)
         if channel == nil then
+            return
+        end
+        if Selector.isWidgetRoot(instance) then
             return
         end
 

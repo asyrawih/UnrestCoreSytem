@@ -409,8 +409,13 @@ export type ElementManager = {
 
     A descriptor needs at least one of Tag / Selector / Name / Role / Group, and needs an
     `Ancestor` when it has no `Tag`.
+
+    `Role` and `Group` are string by default, so `Descriptor` written without arguments means
+    what it always meant. Game code holding a generated `Vocab` may narrow them --
+    `Descriptor<Vocab.Role, Vocab.Group>` -- and have the checker reject a mistyped literal.
+    Nothing at runtime reads these: `Resolver` validates shape, never vocabulary.
 ]]
-export type Descriptor = {
+export type Descriptor<Role = string, Group = string> = {
     --- CollectionService tag. Drives live binding via GetInstanceAdded/RemovedSignal.
     Tag: string?,
     --- ClassName tested with `:IsA()` -- the board's `is:A("Button")`.
@@ -418,9 +423,9 @@ export type Descriptor = {
     --- Exact `Instance.Name`. Re-evaluated live when an element is renamed.
     Name: string?,
     --- `UnrestRole` attribute. Prefer this over `Name`: designers rename things.
-    Role: string?,
+    Role: Role?,
     --- `UnrestGroup` attribute.
-    Group: string?,
+    Group: Group?,
     --- Search root. Required when no `Tag` is supplied.
     Ancestor: Instance?,
     --- Search descendants of `Ancestor` rather than only its children. Defaults to true.

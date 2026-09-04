@@ -123,6 +123,32 @@ widget. Tanpa itu, bagian ini tidak punya widget untuk dimasuki, jadi dia diabai
 **Perbaikannya:** setel `UnrestGroup` — biasanya sekali saja, di wadah tempat bagian-bagian itu
 tinggal, karena `UnrestGroup` diwariskan ke keturunannya.
 
+### Slider-ku tidak menerbitkan apa-apa
+
+Periksa **akar**-nya, bukan knob-nya. `UnrestChannel` yang membuat sebuah widget menerbitkan
+harus ada di instance yang sama dengan `UnrestWidget` dan `UnrestGroup` — akar grup itu —
+karena di situlah control-nya di-mount. Di knob, di track, atau di label, atribut itu berarti
+hal yang lain sama sekali: menulis satu properti instance itu sendiri, seperti pada elemen
+biasa.
+
+```luau
+print(unrest.Widgets:Explain("Musik"))
+--> [Unrest.Widgets] group "Musik" is a complete Slider and is wired.
+--> [Unrest.Widgets] group "Musik" follows the channel "Volume.Musik" and publishes to it on commit.
+```
+
+Kalau baris channel-nya tidak muncul, akarnya tidak membawa atribut itu. `Report().Groups`
+memberi jawaban yang sama sebagai data: field `Root`, `Channel`, dan `Command`.
+
+Tiga hal lain yang menghasilkan gejala yang sama:
+
+- **Belum di-commit.** Yang diterbitkan cuma gerakan yang **selesai** — geseran yang dilepas,
+  switch yang ditekan. Selama menggeser tidak ada apa pun yang keluar; itu memang aturannya.
+- **`Progress`, bukan `Slider`.** `Progress` tidak punya gerakan, jadi dia hanya mengikuti
+  channel dan tidak pernah menerbitkan.
+- **Grupnya tidak lengkap.** Control tidak di-mount sama sekali sampai semua peran wajib ada.
+  Bagian 4 di bawah adalah cara memeriksanya.
+
 ### Dua instance mengaku peran yang sama
 
 ```
@@ -173,8 +199,8 @@ print(unrest.Widgets:Explain("Musik"))
 --> [Unrest.Widgets] group "Musik" is not a complete Slider: missing SliderFill.
 
 local laporan = unrest.Widgets:Report()
--- laporan.Groups  : satu entri per (resep, grup) — Root, Widget, Present, Missing,
---                   Duplicates, Live
+-- laporan.Groups  : satu entri per (resep, grup) — Root, Widget, Channel, Command,
+--                   Present, Missing, Duplicates, Live
 -- laporan.Orphans : elemen berperan yang tidak bisa masuk grup mana pun, dan sebabnya
 ```
 

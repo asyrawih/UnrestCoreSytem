@@ -29,6 +29,13 @@
     `Widgets/init.luau`; `CommandNotActivatable` goes further and asks `Adapters.rejects` for
     the exact string the runtime would warn.
 
+    A WIDGET ROOT IS EXEMPT FROM THE INTENT RULES. An instance that sets `UnrestWidget` keeps
+    its `UnrestCommand` and `UnrestChannel` for the control mounted on it, and `Elements` wires
+    neither -- so `CommandNotActivatable`, `ChannelNotBindable` and the command half of
+    `IntentOnContainer` would all be complaining about the ordinary shape of a declared slider:
+    a Frame, over its parts, saying where its value goes. `Selector.isWidgetRoot` is the
+    predicate, and it is the one the runtime skips on, not a copy of it.
+
     EDIT-MODE SAFE. This module is required by a plugin in a place where nothing is running,
     so it takes its answers from the pure layers only -- `Constants`, `Selector`, `Presets`,
     `Widgets/Schemas` and an `Adapters` registry it builds itself. It must never require
@@ -309,7 +316,9 @@ function Lint.check(root: Instance, options: Options?): { Finding }
             )
         end
 
-        local widget = readString(instance:GetAttribute(ATTRIBUTES.Widget))
+        --- Through `Selector`, not off the instance, because "is this a widget root" is a
+        --- question the runtime answers too and one of the two would drift.
+        local widget = Selector.widgetOn(instance)
         if widget ~= nil then
             noteName(widget, instance, "Widgets")
         end
@@ -381,8 +390,13 @@ function Lint.check(root: Instance, options: Options?): { Finding }
             `UnrestCommand` on a class with no activation. Asked of `Adapters.rejects`, which is
             the same function the runtime warns through, so the sentence is not a copy of the
             runtime's -- it is the runtime's.
+
+            A widget root is exempt, because `Elements` does not wire its command at all: the
+            control `Widgets` mounts there sends it when the gesture settles, and a Frame that
+            cannot be activated is the ordinary shape of such a root. Flagging it would be this
+            module telling a designer to undo the thing the framework asked them to do.
         ]]
-        if readString(instance:GetAttribute(ATTRIBUTES.Command)) ~= nil then
+        if widget == nil and readString(instance:GetAttribute(ATTRIBUTES.Command)) ~= nil then
             local refusal = Adapters.rejects(adapters(), instance, {
                 Active = function() end,
             }, COMMAND_HINT)
@@ -391,7 +405,10 @@ function Lint.check(root: Instance, options: Options?): { Finding }
             end
         end
 
-        local channel = readString((Selector.attributeOf(instance, ATTRIBUTES.Channel)))
+        --- Exempt on a widget root for the same reason the command is: the value on that
+        --- channel is the control's, and it is painted by moving a knob rather than by
+        --- writing a property of the root.
+        local channel = if widget == nil then readString((Selector.attributeOf(instance, ATTRIBUTES.Channel))) else nil
         if channel ~= nil then
             local bind = readString((Selector.attributeOf(instance, ATTRIBUTES.Bind)))
             local resolved = adapters():Resolve(instance)
@@ -447,6 +464,9 @@ function Lint.check(root: Instance, options: Options?): { Finding }
             `TextButton` with an icon `ImageLabel` inside it is the ordinary shape of a button,
             and flagging every one of those would bury the case this rule is for: a `Frame`
             wrapping three buttons, carrying the command one of them was supposed to have.
+
+            A widget root is the deliberate version of exactly that shape -- a Frame with a
+            command, over the parts of one control -- so it is exempt as well.
         ]]
         local hasManagedChild = false
         for _, child in instance:GetChildren() do
@@ -458,7 +478,8 @@ function Lint.check(root: Instance, options: Options?): { Finding }
         if hasManagedChild then
             local misplaced: { string } = {}
             if
-                readString(instance:GetAttribute(ATTRIBUTES.Command)) ~= nil
+                widget == nil
+                and readString(instance:GetAttribute(ATTRIBUTES.Command)) ~= nil
                 and not adapters():Supports(instance, "Active")
             then
                 table.insert(misplaced, ATTRIBUTES.Command)

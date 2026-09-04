@@ -60,22 +60,20 @@ someone who believed they were game code.
 `Packages` is a required mount: the framework requires Scythe from it, so
 `wally install` has to have been run before the place will load.
 
-`bench.project.json` is the same tree plus `ReplicatedStorage.Bench` ->
-`bench/`. Benchmarks are built with it and never ship in a normal build.
-
 ## Build
 
 ```sh
 rojo build -o UnrestCoreSystem.rbxl        # place file
 rojo build -o UnrestCoreSystem.rbxm        # model file
-rojo build bench.project.json -o bench.rbxl   # place file with the benchmarks
+rojo build plugin/default.project.json -o UnrestPlugin.rbxm  # the Studio plugin
 rojo build model.project.json -o Unrest.rbxm  # the framework alone, for the Creator Store
 ```
 
 Three project files, three audiences. `default.project.json` is what you develop
-against. `bench.project.json` is the same tree plus `bench/`. `model.project.json`
-is the framework and nothing else — no game code, no benchmarks — with Scythe
-vendored inside it, because a model has no package manager behind it.
+against. `model.project.json` is the framework and nothing else — no game code,
+no plugin — with Scythe vendored inside it, because a model has no package
+manager behind it. `plugin/default.project.json` is the Studio plugin, its own
+tree, never mounted into the place.
 
 Build artifacts are gitignored.
 

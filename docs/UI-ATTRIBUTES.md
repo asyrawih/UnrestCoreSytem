@@ -25,9 +25,9 @@ di-query; dia sekadar tidak melakukan apa-apa sendiri.
 | --- | --- | --- |
 | `UnrestRole` | string | Nama logis yang dipakai `Descriptor.Role`. Jatuh balik ke `Instance.Name`. |
 | `UnrestGroup` | string | Pengelompokan bebas (`"MenuUtama"`, `"Toko"`), dipilih lewat `Descriptor.Group`. |
-| `UnrestCommand` | string | Perintah yang dikirim lewat `Bridge:Dispatch` saat elemennya diaktifkan. |
+| `UnrestCommand` | string | Perintah yang dikirim lewat `Bridge:Dispatch` saat elemennya diaktifkan. Di akar ber-`UnrestWidget`: dikirim saat gerakan control selesai (bagian 6). |
 | `UnrestPayload` | nilai atribut apa pun | Payload yang dikirim bersama `UnrestCommand`. |
-| `UnrestChannel` | string | Channel yang dilanggani untuk nilai yang ditampilkan elemen ini. |
+| `UnrestChannel` | string | Channel yang dilanggani untuk nilai yang ditampilkan elemen ini. Di akar ber-`UnrestWidget`: nilai control-nya (bagian 6). |
 | `UnrestBind` | string | Properti tujuan penulisan nilai channel. Bawaannya `ValueProperty` milik adapter. |
 | `UnrestFormat` | string | Templat yang diterapkan ke nilai channel. `{value}` adalah lubangnya. |
 | `UnrestCooldown` | number | Debounce sisi client, dalam detik, antar aktivasi. **Anjuran saja.** |
@@ -196,6 +196,41 @@ Dua aturan, dan keduanya sengaja:
 Grup yang **setiap** bagiannya menyetel `UnrestGroup`-nya sendiri tidak punya akar bersama,
 jadi tidak ada tempat untuk atribut ini. `Widgets:Report()` dan `Widgets:Explain(group)`
 mengatakannya; perbaikannya memindahkan grup itu ke wadah bersama.
+
+### `UnrestChannel` dan `UnrestCommand` di akar berarti lain
+
+Begitu sebuah instance menyetel `UnrestWidget`, dua atribut di instance yang sama berpindah
+pemilik: `UnrestChannel` dan `UnrestCommand` **tidak lagi disambungkan oleh `Elements`**, tapi
+oleh control yang di-mount `Widgets` di situ.
+
+| | |
+| --- | --- |
+| Tag | `Unrest` |
+| `UnrestGroup` | `Musik` |
+| `UnrestWidget` | `Slider` |
+| `UnrestChannel` | `Volume.Musik` |
+
+Empat baris itu adalah satu slider yang bekerja: **nol Luau**, persis seperti tombol di bagian
+2. Bacanya begini:
+
+- **Nilai control-nya, bukan properti akarnya.** Di elemen biasa `UnrestChannel` menulis satu
+  properti (lihat bagian 3). Di akar widget dia adalah nilai control-nya sendiri — knob yang
+  bergeser di sepanjang track, bukan `Frame.Text` yang tidak ada.
+- **Menerbitkan hanya gerakan pemain.** Geseran yang dilepas dan tekanan switch menerbitkan
+  sekali. Mount, layar yang dibangun ulang, dan `handle:Set` dari kode game tidak pernah
+  menerbitkan apa pun. `Progress` tidak punya gerakan sama sekali, jadi dia hanya mengikuti.
+- **Selama jari menempel, jari yang menang.** Nilai yang datang di channel diabaikan sejak
+  gerakan dimulai sampai dilepas; sesudah itu control mengikuti channel lagi.
+- **`UnrestCommand` dikirim saat gerakan selesai**, dengan nilai yang disepakati sebagai
+  payload — bukan saat akarnya diklik. Akar `Frame` ber-`UnrestCommand` karena itu **tidak**
+  lagi memunculkan peringatan "kelas ini tidak bisa diaktifkan": tidak ada yang mencoba
+  mengikat aktivasi ke sana.
+- **`UnrestBind` dan `UnrestFormat` tidak dibaca di akar.** Keduanya milik penulisan properti,
+  dan di sini tidak ada properti yang ditulis.
+
+Framework tetap tidak mengeja satu nama pun: `Volume.Musik` diketik desainer di Studio, dan
+yang dilakukan framework cuma merutekannya — persis seperti `UnrestCommand` pada tombol.
+Selengkapnya di [API Widgets](API-WIDGETS.md).
 
 ---
 

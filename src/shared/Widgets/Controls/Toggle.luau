@@ -22,7 +22,10 @@
 
     WHY THERE IS NO `OnCommit`. A slider has a drag, so "moving" and "settled on" are
     different moments and the split earns its keep. A switch has one press, and a press is
-    already settled. A second hook here would be symmetry for its own sake.
+    already settled. A second hook here would be symmetry for its own sake. The handle does
+    carry `Committed`, fired on the same press as `Changed` and straight after it, because the
+    framework's routing asks every control the same question -- "is this gesture over yet" --
+    and a switch's answer is always yes.
 
     ONLY A PRESS ANIMATES. The slide is what a press looks like, so it belongs to a press and
     to nothing else. A switch that slid into place on join -- or when the game called `Set`,
@@ -84,6 +87,15 @@ local Toggle: Types.Control<ToggleConfig> = {
 
         local changed: Types.Signal<any> = Signal.new(`Widgets.Toggle[{group}]`)
         Scope.add(scope, changed)
+        --[[
+            A press is already settled, so this fires on the same press and immediately after
+            `Changed` -- the two moments are the same moment here. It exists so the framework's
+            routing has one rule for every control rather than one for the ones with a drag and
+            another for the ones without; see `Widgets`. There is still no `OnCommit` config,
+            because a caller has nothing to tell apart.
+        ]]
+        local committed: Types.Signal<any> = Signal.new(`Widgets.Toggle[{group}].Committed`)
+        Scope.add(scope, committed)
 
         local state = settings.Initial == true
 
@@ -162,6 +174,7 @@ local Toggle: Types.Control<ToggleConfig> = {
                     state = not state
                     paint(true)
                     changed:Fire(state)
+                    committed:Fire(state)
 
                     local onChange = settings.OnChange
                     if onChange ~= nil then
@@ -185,6 +198,7 @@ local Toggle: Types.Control<ToggleConfig> = {
             end,
 
             Changed = changed,
+            Committed = committed,
         }
     end,
 }

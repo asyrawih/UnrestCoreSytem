@@ -72,6 +72,32 @@ function Selector.roleOf(instance: Instance): string
 end
 
 --[[
+    The widget schema an instance declares, or nil.
+
+    Deliberately not a walk and deliberately not read through the merge: `UnrestWidget` is
+    identity, it is kept out of `Constants.Inheritable`, and `Presets.Register` refuses it. The
+    attribute on the instance itself is the whole answer, which is what makes "is this the root
+    of a widget" a question three readers can ask without any of them holding a resolution.
+]]
+function Selector.widgetOn(instance: Instance): string?
+    local name = instance:GetAttribute(Constants.Attributes.Widget)
+    if typeof(name) == "string" and #name > 0 then
+        return name
+    end
+    return nil
+end
+
+--[[
+    Whether this instance is the root of a widget, which is the one place that question is
+    answered. `Widgets` mounts a control on it and routes the root's `UnrestChannel` and
+    `UnrestCommand` through that control; `Elements` therefore leaves both alone here, and
+    `Tooling/Lint` holds the same rule so its findings and the runtime cannot disagree.
+]]
+function Selector.isWidgetRoot(instance: Instance): boolean
+    return Selector.widgetOn(instance) ~= nil
+end
+
+--[[
     Where every walk in this module stops climbing: the DataModel, and the services parented
     straight to it. A tag or an attribute on `Players` or on `StarterGui` is configuration for
     the whole place, and nothing here is allowed to mean that.

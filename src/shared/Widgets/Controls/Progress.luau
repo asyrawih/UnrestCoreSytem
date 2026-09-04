@@ -22,9 +22,13 @@
     is why the painting comes from `SliderPaint` and this file is the thin part.
 
     THE VALUE ONLY EVER ARRIVES FROM OUTSIDE. Nothing here is a gesture, so `Changed` exists
-    and never fires, and the whole of the API is `handle:Set(fraction)`. `Initial` is what it
-    shows until somebody says otherwise, read on the first mount of a group and never again;
-    after that the value it was left at is what a rebuilt screen comes back showing.
+    and never fires, there is no `Committed` for a gesture to settle into, and the whole of the
+    API is `handle:Set(fraction)`. `Initial` is what it shows until somebody says otherwise,
+    read on the first mount of a group and never again; after that the value it was left at is
+    what a rebuilt screen comes back showing.
+
+    Which makes an `UnrestChannel` on its root read one way only: a progress bar follows the
+    channel and can never publish to it, because it has no gesture to publish from.
 ]]
 
 local Schemas = require(script.Parent.Parent.Schemas)
