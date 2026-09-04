@@ -70,6 +70,27 @@ function Export.mount(parent: Frame, framework: Framework.Framework, context: Fr
         }
     end
 
+    --[[
+        `target` and `write` arrived after `generate` did. A place whose framework predates them
+        can still preview, and must not crash the whole dock over a missing writer -- a panel
+        that raises inside `mount` leaves `build` half-done and every tab dead. The same
+        symptom appears when Studio's require cache still holds an older `Tooling/Vocab` than
+        the one on disk, which is why the sentence names the restart.
+    ]]
+    if (Vocab :: any).target == nil or (Vocab :: any).write == nil then
+        Ui.note(scroller, Framework.needs("Tooling/Vocab.write"))
+        Ui.tinted(
+            scroller,
+            "Kalau `Tooling/Vocab.luau` di disk sudah punya `write`, ini cache require Studio yang "
+                .. "basi: restart Studio.",
+            Ui.Color.Info
+        )
+        return {
+            refresh = function() end,
+            destroy = function() end,
+        }
+    end
+
     local generator = Vocab
 
     --[[

@@ -198,10 +198,29 @@ function build(): ()
         show(index)
     end)
 
+    --[[
+        One panel raising must not take the dock with it. Everything after this loop --
+        `show`, the selection watcher -- is what makes the tabs work, so a `mount` that raised
+        here used to leave a tab bar whose every click called nothing. The failed panel gets
+        its error where its content would be, and the rest of the dock carries on.
+    ]]
     for _, tab in TABS do
         local frame = Ui.panel(content)
         table.insert(frames, frame)
-        table.insert(panels, tab.Module.mount(frame, found, context))
+        local ok, panel = pcall(tab.Module.mount, frame, found, context)
+        if ok then
+            table.insert(panels, panel)
+        else
+            local message = tostring(panel)
+            warn(`[UnrestPlugin] panel {tab.Name} gagal dipasang: {message}`)
+            local note = Ui.scroll(frame)
+            Ui.heading(note, tab.Name)
+            Ui.tinted(note, `Panel ini gagal dipasang: {message}`, Ui.Color.Warning)
+            table.insert(panels, {
+                refresh = function() end,
+                destroy = function() end,
+            })
+        end
     end
 
     --[[
