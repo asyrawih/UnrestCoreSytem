@@ -32,6 +32,7 @@ di-query; dia sekadar tidak melakukan apa-apa sendiri.
 | `UnrestFormat` | string | Templat yang diterapkan ke nilai channel. `{value}` adalah lubangnya. |
 | `UnrestCooldown` | number | Debounce sisi client, dalam detik, antar aktivasi. **Anjuran saja.** |
 | `UnrestPreset` | string | Menyebut bundel yang memekar jadi beberapa atribut di atas. |
+| `UnrestWidget` | string | Menyebut skema widget yang dimainkan grup ini (`"Slider"`, `"Toggle"`). Ditulis di **akar** grup, bersebelahan dengan `UnrestGroup`. |
 | `UnrestIgnore` | boolean | `true` mengeluarkan instance ini dan seluruh subtree-nya dari penurunan tag. Struktural, bukan wiring — dia tidak ikut dalam penggabungan di bagian 4. |
 
 Nama-nama ini ada di `Constants.Attributes`. Pakai konstantanya di kode, jangan string
@@ -167,7 +168,38 @@ Lihat [API Presets](API-PRESETS.md).
 
 ---
 
-## 6. Warisan — konteks, tidak pernah niat
+## 6. `UnrestWidget` — grup yang menyebut dirinya
+
+Sebuah widget adalah beberapa instance yang baru berarti kalau digabung, dan `UnrestGroup`
+yang menyatukannya. `UnrestWidget` menyebut **jenis**-nya:
+
+| | |
+| --- | --- |
+| Tag | `Unrest` |
+| `UnrestGroup` | `Musik` |
+| `UnrestWidget` | `Slider` |
+
+Ketiganya di satu instance: **akar** grup, yaitu instance yang menyediakan `UnrestGroup`
+untuk bagian-bagiannya. Nama skemanya dibaca dari `Widgets/Schemas.luau`, dan yang membaca
+atributnya ada tiga — runtime (`Widgets:Each({ Widget = "Slider" })` dan `Widgets:Report()`),
+perkakas Studio, dan generator kosakata. Lihat [API Widgets](API-WIDGETS.md).
+
+Dua aturan, dan keduanya sengaja:
+
+- **Tidak pernah diwariskan.** Dia identitas milik akar itu saja. Kalau menurun, setiap Frame
+  di bawah sebuah panel akan mengaku slider.
+- **Tidak boleh ada di dalam preset.** `Presets.Register` menolaknya dengan menyebut
+  alasannya: preset adalah bundel *wiring* yang dipakai ulang, sedangkan widget adalah satu
+  benda di layar. Preset yang membawa `UnrestWidget` akan menamai selusin grup sekaligus
+  dengan satu benda yang sama.
+
+Grup yang **setiap** bagiannya menyetel `UnrestGroup`-nya sendiri tidak punya akar bersama,
+jadi tidak ada tempat untuk atribut ini. `Widgets:Report()` dan `Widgets:Explain(group)`
+mengatakannya; perbaikannya memindahkan grup itu ke wadah bersama.
+
+---
+
+## 7. Warisan — konteks, tidak pernah niat
 
 Persis **tiga** atribut yang diwarisi dari leluhur, dan ketiganya terdaftar di
 `Constants.Inheritable`:
@@ -179,10 +211,10 @@ Persis **tiga** atribut yang diwarisi dari leluhur, dan ketiganya terdaftar di
 | `UnrestPreset` | bundel bawaan untuk semua yang ada di bawah satu wadah |
 
 Selebihnya — `UnrestRole`, `UnrestCommand`, `UnrestPayload`, `UnrestChannel`, `UnrestBind`,
-`UnrestFormat` — adalah **niat per elemen dan tidak pernah diwariskan**. Perintah yang
-diwariskan akan diam-diam mempersenjatai setiap keturunan sebuah panel dengan perintah yang
-sama, dan itu kebalikan dari fitur. `UnrestRole` adalah identitas elemen ini, jadi dia juga
-tinggal di tempatnya.
+`UnrestFormat`, `UnrestWidget` — adalah **niat per elemen dan tidak pernah diwariskan**.
+Perintah yang diwariskan akan diam-diam mempersenjatai setiap keturunan sebuah panel dengan
+perintah yang sama, dan itu kebalikan dari fitur. `UnrestRole` adalah identitas elemen ini,
+jadi dia juga tinggal di tempatnya, dan `UnrestWidget` adalah identitas akar sebuah grup.
 
 ### Penelusurannya berhenti di layar
 
@@ -238,7 +270,7 @@ Keduanya sama-sama tidak pernah membaca service atau DataModel.
 
 ---
 
-## 7. Atribut tidak memberi hak istimewa
+## 8. Atribut tidak memberi hak istimewa
 
 `UnrestCommand` lewat **`Bridge:Dispatch` yang sama persis** dengan Luau tulisan tangan, dan
 sampai ke handler yang sama. Atribut bukan mekanisme kedua: dari seberang Bridge, layar yang

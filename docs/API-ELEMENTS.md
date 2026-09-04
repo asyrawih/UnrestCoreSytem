@@ -239,6 +239,28 @@ Setiap elemen yang sedang dikelola.
 
 Sama dengan `Unrest:Query`.
 
+### `Elements:Explain(descriptor: Descriptor, instance: Instance): string`
+
+Kenapa satu instance cocok — atau tidak cocok — dengan sebuah descriptor, klausa per klausa,
+dalam urutan yang sama dengan predikatnya.
+
+```luau
+print(unrest.Elements:Explain({ Tag = unrest.Tag, Selector = "GuiButton", Role = "SliderKnob" }, track))
+--> Tag: ok (cascaded from Musik) · Selector: FAIL — Frame is not a GuiButton · Role: ok ("SliderKnob", set here)
+```
+
+Query yang kosong cuma bilang "tidak ada yang cocok". Ini bilang **klausa mana** yang menolak,
+dan instance-nya sebenarnya apa: kelasnya, dari mana tag-nya menurun, peran mana yang
+sebenarnya dia mainkan dan di mana peran itu diketik. Itu selisih antara membaca layar dan
+menebaknya.
+
+Kalimatnya dibangun `Selector.explain`, yang menjalankan ulang klausa `Selector.matches` satu
+per satu — jadi penjelasan tidak bisa bilang `ok` untuk klausa yang sebenarnya menolak.
+Descriptor mentah pun boleh: `parse` dipanggil di dalam, dengan validasi yang sama.
+
+Dipakai panel Inspector di plugin Studio dan sesi agen lewat MCP; di kode game dia paling
+berguna sebagai satu `print` saat sebuah query yang kelihatan benar mengembalikan nol elemen.
+
 ### `Elements:Destroy(): ()`
 
 Merobohkan manajernya.

@@ -103,9 +103,9 @@ game-mu, sebelum layarnya diadopsi.
 [Unrest.Widgets] :Each() is client-only -- the server has no screen to find widgets on.
 ```
 
-**Artinya:** `Unrest.Widgets:Each` dan `:Drag` **melempar error** di server. Widget adalah
-sesuatu di layar, dan server tidak punya layar; diam-diam tidak melakukan apa-apa cuma akan
-menyembunyikan kesalahannya sampai jauh belakangan.
+**Artinya:** `Unrest.Widgets:Each`, `:Drag`, `:Drag2D`, `:Report` dan `:Explain` **melempar
+error** di server. Widget adalah sesuatu di layar, dan server tidak punya layar; diam-diam
+tidak melakukan apa-apa cuma akan menyembunyikan kesalahannya sampai jauh belakangan.
 
 **Perbaikannya:** pindahkan panggilannya ke `src/game-client/`. Lihat
 [API Widgets](API-WIDGETS.md).
@@ -165,8 +165,30 @@ akan menyambungkan mana pun yang kebetulan ditemukan terakhir.
 
 ## 4. Kalau widget tidak pernah tersambung
 
+**Tanya framework-nya dulu.** Dia sudah memegang jawabannya; keempat pemeriksaan di bawah
+adalah cara mencarinya dengan tangan.
+
+```luau
+print(unrest.Widgets:Explain("Musik"))
+--> [Unrest.Widgets] group "Musik" is not a complete Slider: missing SliderFill.
+
+local laporan = unrest.Widgets:Report()
+-- laporan.Groups  : satu entri per (resep, grup) — Root, Widget, Present, Missing,
+--                   Duplicates, Live
+-- laporan.Orphans : elemen berperan yang tidak bisa masuk grup mana pun, dan sebabnya
+```
+
+Keduanya **tidak mencetak apa pun sendiri** dan tidak menambah peringatan baru — laporan,
+bukan omelan. Keduanya client saja, sama seperti `Each`. Lihat
+[API Widgets](API-WIDGETS.md).
+
+Kalimat `no recipe has seen a group "..."` berarti grupnya salah eja, atau bagian-bagiannya
+belum diadopsi sama sekali. Kalimat `has no shared root` berarti setiap bagian menyetel
+`UnrestGroup`-nya sendiri: itu tetap tersambung untuk `Each` polos, tapi tidak ada tempat
+untuk `UnrestWidget`.
+
 `OnReady` baru dipanggil ketika **setiap** peran di `Required` sudah hadir untuk satu grup.
-Periksa empat hal ini, berurutan:
+Kalau masih perlu ditelusuri sendiri, periksa empat hal ini, berurutan:
 
 1. **Apakah semuanya di bawah `PlayerGui` pemain ini?** `Widgets` sengaja mengabaikan apa pun
    yang bukan keturunan `PlayerGui`. Layar bertag ada dua kali saat game jalan — cetakannya di

@@ -28,8 +28,26 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+local Manifest = require(script.Manifest)
+local Presets = require(ReplicatedStorage.Unrest.Presets)
+local Schemas = require(ReplicatedStorage.Unrest.Widgets.Schemas)
 local Unrest = require(ReplicatedStorage.Unrest)
 
 local unrest = Unrest:Start()
+
+--[[
+    The manifest, made real.
+
+    `Manifest.luau` is pure data so that the Studio tooling can read it in edit mode, where
+    nothing has run. This loop is the other reader: it turns the same table into registrations,
+    before any feature loads, so a preset or a schema a feature names is already declared by
+    the time the screen is adopted.
+]]
+for name, bundle in Manifest.Presets do
+    Presets.Register(name, bundle)
+end
+for _, schema in Manifest.Widgets do
+    Schemas.Register(schema)
+end
 
 require(script.ServerList)(unrest)

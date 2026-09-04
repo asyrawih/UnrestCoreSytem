@@ -767,4 +767,167 @@ function Selector.matches(instance: Instance, compiled: Types.CompiledSelector):
     return true
 end
 
+--------------------------------------------------------------------------------
+-- Explaining a match
+--------------------------------------------------------------------------------
+
+--[[
+    The two pieces of punctuation the report is written with, as escapes and as constants.
+
+    A middle dot separates the clauses and an em dash introduces the reason a clause failed,
+    both because the report is read at a glance and both are wider than any character a role
+    or a class name can contain. They live out here rather than inside the interpolated
+    strings below, where `\u{...}` and interpolation both want the brace.
+]]
+local CLAUSE_SEPARATOR = " \u{00B7} "
+local FAILED = ": FAIL \u{2014} "
+
+--- The nearest instance at or above `instance` carrying `tag`, for the cascade's provenance.
+local function nearestTagged(instance: Instance, tag: string): Instance?
+    local current: Instance? = instance
+    while current ~= nil do
+        local candidate: Instance = current
+        if CollectionService:HasTag(candidate, tag) then
+            return candidate
+        end
+        if isBoundary(candidate) then
+            return nil
+        end
+        current = candidate.Parent
+    end
+    return nil
+end
+
+--- The nearest instance at or above `instance` that sets `UnrestIgnore = true`.
+local function nearestIgnored(instance: Instance): Instance?
+    local current: Instance? = instance
+    while current ~= nil do
+        local candidate: Instance = current
+        if isIgnored(candidate) then
+            return candidate
+        end
+        if isBoundary(candidate) then
+            return nil
+        end
+        current = candidate.Parent
+    end
+    return nil
+end
+
+--[[
+    `matches`, said out loud. One phrase per clause the descriptor sets, in the order the
+    predicate runs them, joined with a middle dot:
+
+        Tag: ok (cascaded from Panel) - Selector: FAIL, Frame is not a GuiButton
+
+    The value of this is entirely in the failing clause. A query that finds nothing tells you
+    only that; this tells you *which* of the five conditions turned the instance away and what
+    the instance actually is, which is the difference between reading a screen and guessing at
+    it. `Elements:Explain` is the door, and the plugin's inspector and an agent over MCP both
+    come through it.
+
+    It re-runs the clauses rather than instrumenting `matches`, and deliberately: the predicate
+    is on the hot path of every rename and every attribute edit, and threading a report through
+    it would make every element in the place pay for a sentence nobody reads.
+]]
+function Selector.explain(descriptor: Types.Descriptor, instance: Instance): string
+    local compiled = Selector.parse(descriptor)
+    local clauses: { string } = {}
+
+    local function say(label: string, ok: boolean, detail: string?): ()
+        if ok then
+            table.insert(clauses, if detail ~= nil then `{label}: ok ({detail})` else `{label}: ok`)
+        else
+            table.insert(clauses, label .. FAILED .. (detail or ""))
+        end
+    end
+
+    local tag = compiled.Tag
+    if tag ~= nil then
+        if not Selector.cascades(tag) then
+            if CollectionService:HasTag(instance, tag) then
+                say("Tag", true, "tagged here")
+            else
+                say("Tag", false, `{instance.Name} does not carry the tag "{tag}"`)
+            end
+        elseif Selector.isManaged(instance) then
+            if CollectionService:HasTag(instance, tag) then
+                say("Tag", true, "tagged here")
+            else
+                local from = nearestTagged(instance, tag)
+                say("Tag", true, if from ~= nil then `cascaded from {from.Name}` else "managed")
+            end
+        else
+            local ignoredBy = nearestIgnored(instance)
+            local from = nearestTagged(instance, tag)
+            if not isPresent(instance) then
+                say("Tag", false, `{instance.ClassName} is not in the DataModel`)
+            elseif ignoredBy ~= nil then
+                say("Tag", false, `{ATTRIBUTES.Ignore} on {ignoredBy.Name} opts it out of the "{tag}" tag`)
+            elseif from == nil then
+                say("Tag", false, `nothing at or above {instance.Name} carries the "{tag}" tag`)
+            else
+                say("Tag", false, `{instance.ClassName} is not a GuiObject, so the cascade does not reach it`)
+            end
+        end
+    end
+
+    local className = compiled.Selector
+    if className ~= nil then
+        if instance:IsA(className) then
+            say("Selector", true, `{instance.ClassName} is a {className}`)
+        else
+            say("Selector", false, `{instance.ClassName} is not a {className}`)
+        end
+    end
+
+    local name = compiled.Name
+    if name ~= nil then
+        if instance.Name == name then
+            say("Name", true, `"{name}"`)
+        else
+            say("Name", false, `Name is "{instance.Name}", not "{name}"`)
+        end
+    end
+
+    local role = compiled.Role
+    if role ~= nil then
+        local own = instance:GetAttribute(ATTRIBUTES.Role)
+        local where = if typeof(own) == "string" and #own > 0 then "set here" else "from Name"
+        local actual = Selector.roleOf(instance)
+        if actual == role then
+            say("Role", true, `"{actual}", {where}`)
+        else
+            say("Role", false, `role is "{actual}" ({where}), not "{role}"`)
+        end
+    end
+
+    local group = compiled.Group
+    if group ~= nil then
+        local _, source = Selector.attributeOf(instance, ATTRIBUTES.Group)
+        local where = if source ~= nil then source.Text else "set here"
+        local actual = Selector.groupOf(instance)
+        if actual == group then
+            say("Group", true, `"{actual}", {where}`)
+        elseif actual == nil then
+            say("Group", false, `{instance.Name} is in no group`)
+        else
+            say("Group", false, `group is "{actual}" ({where}), not "{group}"`)
+        end
+    end
+
+    local ancestor = compiled.Ancestor
+    if ancestor ~= nil then
+        local scope = if compiled.Recursive then "under" else "directly in"
+        local inside = if compiled.Recursive then instance:IsDescendantOf(ancestor) else instance.Parent == ancestor
+        if inside then
+            say("Ancestor", true, `{scope} {ancestor:GetFullName()}`)
+        else
+            say("Ancestor", false, `not {scope} {ancestor:GetFullName()}`)
+        end
+    end
+
+    return table.concat(clauses, CLAUSE_SEPARATOR)
+end
+
 return Selector

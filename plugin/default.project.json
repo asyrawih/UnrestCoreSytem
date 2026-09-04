@@ -1,0 +1,9 @@
+{
+  "name": "UnrestPlugin",
+  "globIgnorePaths": [
+    "**/*.md"
+  ],
+  "tree": {
+    "$path": "src"
+  }
+}

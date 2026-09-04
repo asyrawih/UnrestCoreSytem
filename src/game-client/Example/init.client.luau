@@ -40,7 +40,10 @@
 --     `OnChange` fires on every move, so it belongs to anything the player should feel while
 --     dragging. `OnCommit` fires once on release, and belongs to anything that costs something.
 --
---     A slider with no entry here still paints itself and still publishes `Volume.<group>`.
+--     The slider itself is the framework's: a root with `UnrestWidget = "Slider"` paints and
+--     drags with or without a line here. What an entry adds is meaning -- the group it names
+--     publishes `Volume.<group>` while it is dragged. A group with no entry works and stays
+--     quiet, and nothing is published at all until the player moves something.
 -- ]]
 -- require(script.Slider)(unrest, {
 --     Musik = {
@@ -72,6 +75,10 @@
 --     Switches use the same shape as sliders: actions keyed by `UnrestGroup`. There is no
 --     `OnCommit` here because a press is already the settled value, and `Initial` exists because
 --     a switch that assumed off would fight whatever the game already knows.
+--
+--     `Initial` is read the first time a group is assembled and never again: after that the
+--     state the player left it in survives the screen being rebuilt, and comes back without
+--     publishing `Toggle.<group>` a second time.
 -- ]]
 -- require(script.Toggle)(unrest, {
 --     Fullscreen = {

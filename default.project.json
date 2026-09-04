@@ -13,10 +13,6 @@
         "$path": "src/shared"
       },
 
-      "Benching": {
-        "$path": "bench"
-      },
-
       "GameNet": {
         "$path": "src/game-net"
       },

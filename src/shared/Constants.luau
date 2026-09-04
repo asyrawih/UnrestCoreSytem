@@ -48,6 +48,19 @@ local Constants = {
     Tag = "Unrest",
 
     --[[
+        The tag on a game's manifest: one pure-data `ModuleScript` listing the presets and the
+        widget schemas that game declares.
+
+        A preset is registered at startup, so in Studio's edit mode -- where nothing has run --
+        the table is empty and the tooling is blind to every name a game invented. Tagging the
+        manifest is how the second reader finds it: the bootstrap requires it and registers
+        what is inside, and `Tooling/Lint` reads the same table through
+        `CollectionService:GetTagged`. One source, two readers, and no fixed path either of
+        them has to agree on.
+    ]]
+    ManifestTag = "UnrestManifest",
+
+    --[[
         Attributes a designer sets in Studio to wire an element with no code at all.
         Every one is optional; an element with only the tag is still adopted and queryable.
     ]]
@@ -75,6 +88,13 @@ local Constants = {
         --- Names an entry in `Presets.luau`, which expands into several of the attributes
         --- above. One attribute instead of five, defined once and reused.
         Preset = "UnrestPreset",
+        --[[
+            Names the widget schema the subtree under this instance plays: "Slider",
+            "Toggle". Set once, on the root that also carries the group's `UnrestGroup`.
+            Identity for that root only -- never inherited, and a preset may not supply it,
+            because a preset is a bundle of wiring and a widget is a thing on the screen.
+        ]]
+        Widget = "UnrestWidget",
         --[[
             Opts an instance and everything under it back out of a cascading tag. The escape
             hatch for the one decorative subtree inside an otherwise managed screen; set it

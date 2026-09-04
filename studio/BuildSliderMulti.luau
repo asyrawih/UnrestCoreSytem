@@ -46,9 +46,12 @@ local function buatSlider(nama: string, y: number)
     akar.BorderSizePixel = 0
     akar.Parent = screen
 
-    --- SATU tag, dan SATU atribut identitas. Ini saja yang berubah saat menduplikasi.
+    --- SATU tag, dan atribut identitasnya. Cuma Group-nya yang berubah saat menduplikasi.
     CollectionService:AddTag(akar, "Unrest")
     akar:SetAttribute("UnrestGroup", nama)
+    --- Akarnya menyebut skema yang dimainkan grup ini. Dibaca `Widgets:Report()` dan resep
+    --- `Each({ Widget = "Slider" })`; tidak diwariskan, jadi tempatnya memang di sini.
+    akar:SetAttribute("UnrestWidget", "Slider")
 
     local judul = Instance.new("TextLabel")
     judul.Name = "Judul"

@@ -42,10 +42,21 @@
     attributes, and nothing more.
 ]]
 
+local Constants = require(script.Parent.Constants)
+
 export type Preset = { [string]: any }
 
 --- Empty by design: see the header. Every entry here arrives through `Presets.Register`.
 local PRESETS: { [string]: Preset } = {}
+
+--[[
+    Attributes a preset may not carry. `UnrestWidget` names what a subtree *is*, and a preset
+    is inheritable: a preset carrying it would stamp the widget's identity onto every part
+    beneath the root, and each part would then claim to be its own Slider.
+]]
+local FORBIDDEN: { [string]: string } = {
+    [Constants.Attributes.Widget] = "names a widget root, and a preset is inherited by every part under one",
+}
 
 local Presets = {}
 
@@ -85,6 +96,14 @@ function Presets.Register(name: string, preset: Preset): Preset
             error(
                 `[Unrest.Presets] preset "{name}" has key {tostring(key)}, which is not an `
                     .. `Unrest attribute name. Use the names in Constants.Attributes.`,
+                0
+            )
+        end
+        local reason = FORBIDDEN[key]
+        if reason ~= nil then
+            error(
+                `[Unrest.Presets] preset "{name}" sets {key}, which a preset may not: it {reason}. `
+                    .. `Set it on the widget root directly.`,
                 0
             )
         end

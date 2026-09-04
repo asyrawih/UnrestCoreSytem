@@ -100,6 +100,16 @@ selene src && stylua --check src
   the bug pattern this repo keeps hitting is one question answered in two places. Do not add a
   third copy, and do not move the ledger into `Selector`: state in there would cost the module
   the thing that makes it trustworthy.
+- **`src/shared/Tooling/` is edit-mode code and runtime code never calls it.** `Lint` and
+  `Vocab` are pure: they read `Constants`, `Selector`, `Presets`, `Widgets/Schemas` and an
+  `Adapters` registry they build themselves, they return values instead of printing, and they
+  edit nothing that a caller has not asked them to. They must **never** require
+  `Widgets/init.luau` or `Elements/init.luau` — both reach for a running client at file scope,
+  and the reader that matters here is a Studio plugin in a place where nothing has started.
+  The arrow points one way: `Tooling` may require the runtime's pure layers, and no runtime
+  file may require `Tooling`. The future `plugin/` follows the same rule one level up — its
+  own Rojo project, built to a `.rbxm` and installed into Studio, and like `bench` it is
+  **never** mounted in `default.project.json`.
 - **A tag outlives its instance.** `Destroy()` takes an instance out of
   `CollectionService:GetTagged` but leaves the tag on it, so `HasTag` answers `true` forever
   after. `Selector.isManaged` therefore asks `IsDescendantOf(game)` first: managed means

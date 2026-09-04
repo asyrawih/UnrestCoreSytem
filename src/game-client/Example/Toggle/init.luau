@@ -16,13 +16,13 @@
 --[[
     Toggle switches.
 
-    The same shape as `Slider`: a widget is several tagged parts that only mean something
-    together, `UnrestGroup` on their shared root says which switch they belong to, and actions
-    are keyed by that group so adding a switch never edits an existing handler.
+    The same shape as `Slider`, and for the same reason: the framework drives the switch
+    itself, and this file is only where a press becomes a channel. A root carrying
+    `UnrestGroup` and `UnrestWidget = "Toggle"` is a working switch with no Luau at all.
 
     What Studio needs, per switch:
 
-        Root   (Frame)          tag "Unrest", UnrestGroup = "Music"
+        Root   (Frame)          tag "Unrest", UnrestGroup = "Musik", UnrestWidget = "Toggle"
           Button (GuiButton)    UnrestRole = "ToggleButton"    -- the whole track, clickable
             Knob (Frame)        UnrestRole = "ToggleKnob"      -- slides left and right
           Label  (TextLabel)    UnrestRole = "ToggleLabel"     -- optional
@@ -34,25 +34,23 @@
     a second hook here would be symmetry for its own sake.
 
     `Initial` is the one thing a switch needs that a slider does not. A slider starts at zero
-    because zero is a real position; a switch that assumes off would fight whatever the game
-    already knows. Give it the truth and it paints that on the first frame.
+    because zero is a real position; a switch that assumed off would fight whatever the game
+    already knows. Give it the truth and it paints that on the first frame -- once, on the
+    first time that group is assembled. After that the state the player left it in is what a
+    rebuilt screen comes back showing, and it comes back without publishing anything.
+
+    A GROUP WITH NO ENTRY still works and still animates; it simply publishes nothing, because
+    nothing here said what its state means.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local TweenService = game:GetService("TweenService")
 
+--- The built-in control's config type, so a misspelled field is a strict-mode error here.
+local ToggleControl = require(ReplicatedStorage.Unrest.Widgets.Controls.Toggle)
 local Types = require(ReplicatedStorage.Unrest.Types)
-
-local REQUIRED = { "ToggleButton", "ToggleKnob" }
-local OPTIONAL = { "ToggleLabel" }
-
-local OFF_COLOUR = Color3.fromRGB(60, 60, 68)
-local ON_COLOUR = Color3.fromRGB(124, 58, 237)
-
---- Gap between the knob and the end of the track it slides in.
-local PADDING = 2
-
-local SLIDE = TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+--- Generated from the place by `Tooling/Vocab`; a misspelled widget name is a strict-mode
+--- error here rather than a raise at Play.
+local Vocab = require(script.Parent.Parent.Vocab)
 
 --- What one switch does with its own state. Both are optional.
 export type Actions = {
@@ -67,104 +65,41 @@ export type Config = { [string]: Actions }
 
 return function(unrest: Types.Unrest, config: Config?): ()
     local actions: Config = config or {}
-    local seen: { [string]: boolean } = {}
+
+    --- One control config per group named above, with the channel written into it.
+    local wired: { [string]: ToggleControl.ToggleConfig } = {}
+    for group, mine in actions do
+        wired[group] = {
+            Initial = mine.Initial,
+
+            OnChange = function(value: boolean)
+                unrest.Bridge:Publish(`Toggle.{group}`, value)
+
+                local onChange = mine.OnChange
+                if onChange ~= nil then
+                    onChange(value)
+                end
+            end,
+        }
+    end
+
+    local toggles = unrest.Widgets:Use(Vocab.Widgets.Toggle, wired)
 
     --[[
         A key that matches no switch does nothing at all, and a misspelled group name is
-        exactly that. Say it out loud once the screen has had time to arrive.
+        exactly that. Ask the handle what it ended up driving once the screen has had time to
+        arrive, and say the rest out loud.
     ]]
     task.delay(5, function()
+        local driving: { [string]: boolean } = {}
+        for _, group in toggles:Groups() do
+            driving[group] = true
+        end
+
         for group in actions do
-            if not seen[group] then
+            if not driving[group] then
                 warn(`[Toggle] actions were given for "{group}" but no switch carries that UnrestGroup.`)
             end
         end
     end)
-
-    local function onReady(group: string, parts: Types.WidgetParts, scope: Types.Scope): ()
-        seen[group] = true
-
-        local mine: Actions = actions[group] or {}
-        local button = parts.ToggleButton :: GuiButton
-        local knob = parts.ToggleKnob :: GuiObject
-
-        local state = mine.Initial == true
-
-        --[[
-            The two resting positions, measured rather than assumed.
-
-            `UDim2.fromScale(0, 0.5)` and `(1, 0.5)` put the knob's centre on the track's edge,
-            so with the usual centred anchor half of it hangs outside at both ends. Offsetting
-            by half the knob's own width, plus the padding, keeps it flush inside -- and doing
-            it in offset rather than scale means it stays correct at any track width.
-
-            `AbsoluteSize` is `0, 0` until the first layout pass, and a widget adopted before
-            its screen has been laid out would measure zero and stack both ends on top of each
-            other. So the measurement is taken every paint, and a size change repaints.
-        ]]
-        local function restingPlaces(): (UDim2, UDim2)
-            local half = knob.AbsoluteSize.X / 2
-            local inset = half + PADDING
-            return UDim2.new(0, inset, 0.5, 0), UDim2.new(1, -inset, 0.5, 0)
-        end
-
-        --- `animate` is false for the opening paint: a switch that slides into place on join
-        --- looks like something the player did.
-        local function paint(animate: boolean): ()
-            local off, on = restingPlaces()
-            local position = if state then on else off
-            local colour = if state then ON_COLOUR else OFF_COLOUR
-
-            if animate then
-                TweenService:Create(knob, SLIDE, { Position = position }):Play()
-                TweenService:Create(button, SLIDE, { BackgroundColor3 = colour }):Play()
-            else
-                knob.Position = position
-                button.BackgroundColor3 = colour
-            end
-
-            --- Read late rather than captured, because the label is optional and may have
-            --- arrived after this widget was handed over.
-            local label = parts.ToggleLabel :: TextLabel?
-            if label ~= nil then
-                label.Text = `{group}: {if state then "on" else "off"}`
-            end
-
-            unrest.Bridge:Publish(`Toggle.{group}`, state)
-        end
-
-        paint(false)
-
-        --[[
-            Both connections go on the scope the framework handed over, so untagging the switch
-            or rebuilding the screen takes them with it.
-
-            `button.Activated` rather than a query on the `ToggleButton` role. A query would
-            match every switch on screen and need a `pressed ~= button` guard to throw away the
-            other switches' presses -- one query and one set of watchers per switch, to learn
-            something we are already holding. `Activated` is the same event the framework's own
-            `Active` handler binds to on a GuiButton, minus the search for the button.
-        ]]
-        unrest.Scope.addBulk(
-            scope,
-            --- A resize moves both ends, so the knob has to be put back where it now belongs.
-            knob:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
-                paint(false)
-            end),
-            button.Activated:Connect(function()
-                state = not state
-                paint(true)
-
-                if mine.OnChange ~= nil then
-                    mine.OnChange(state)
-                end
-            end)
-        )
-    end
-
-    unrest.Widgets:Each({
-        Required = REQUIRED,
-        Optional = OPTIONAL,
-        OnReady = onReady,
-    })
 end

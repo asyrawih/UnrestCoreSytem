@@ -37,6 +37,7 @@
 
 local AdapterTypes = require(script.Parent.Adapters.Types)
 local Primitives = require(script.Parent.Primitives)
+local Schemas = require(script.Parent.Widgets.Schemas)
 -- Required for its type alone; selene cannot see a type-position use, hence the allow.
 -- selene: allow(unused_variable)
 local ScopeModule = require(script.Parent.Util.Scope)
@@ -154,6 +155,10 @@ export type Bridge = {
 --- The instances of one widget, keyed by role. Optional roles may be absent.
 export type WidgetParts = { [string]: Instance? }
 
+--- What a widget is made of: see `Widgets/Schemas.luau`. Re-exported so game code needs one require.
+export type WidgetSchema = Schemas.WidgetSchema
+export type SchemaCheck = Schemas.SchemaCheck
+
 --[[
     What `Unrest.Widgets:Each` needs to know.
 
@@ -167,14 +172,133 @@ export type WidgetParts = { [string]: Instance? }
     fresh scope rather than a second set of live handlers on top of the first.
 ]]
 export type WidgetSpec = {
-    Required: { string },
+    --- May be left empty when `Widget` names a registered schema; the schema's roles are used.
+    Required: { string }?,
     Optional: { string }?,
+    --[[
+        When set, only groups whose root carries `UnrestWidget` equal to this name are
+        accepted, and `Required` / `Optional` default to the schema registered under it.
+        The root of a group is the nearest ancestor supplying its `UnrestGroup`, or the
+        element itself when it sets its own.
+    ]]
+    Widget: string?,
     OnReady: (group: string, parts: WidgetParts, scope: Scope) -> (),
 }
 
 --- Stops one `Each`. Wired widgets are torn down; the shared query stays for the others.
 export type WidgetHandle = {
     Destroy: (self: WidgetHandle) -> (),
+    --- The parts of a group this recipe currently has wired, or nil when it is not complete.
+    Get: (self: WidgetHandle, group: string) -> WidgetParts?,
+    --- Groups this recipe currently has wired, sorted.
+    Groups: (self: WidgetHandle) -> { string },
+}
+
+--- Which way a `Drag` measures. `Invert` makes the far end zero: a vertical slider almost
+--- always wants `Axis = "Y", Invert = true` so the bottom is 0.
+export type DragOptions = {
+    Axis: ("X" | "Y")?,
+    Invert: boolean?,
+}
+
+--- One group as `Widgets:Report()` sees it, whether or not it is wired.
+export type WidgetGroupReport = {
+    Group: string,
+    --- The nearest provider of the group's `UnrestGroup`; nil when every part sets its own.
+    Root: Instance?,
+    --- `UnrestWidget` on the root, when there is one.
+    Widget: string?,
+    --- The recipe this entry belongs to: its `Widget` name, or "Each #N" for a plain one.
+    Recipe: string,
+    Present: { string },
+    Missing: { string },
+    Duplicates: { { Role: string, Kept: Instance, Ignored: Instance } },
+    Live: boolean,
+}
+
+export type WidgetReport = {
+    Groups: { WidgetGroupReport },
+    --- Elements playing a role a recipe wants that could not join any group, and why.
+    Orphans: { { Instance: Instance, Role: string, Reason: string } },
+}
+
+--------------------------------------------------------------------------------
+-- Controls: the widgets the framework drives itself
+--------------------------------------------------------------------------------
+
+--[[
+    One mounted control, from the outside.
+
+    `Get` and `Set` are its value. `Set` paints and calls nothing back, because a value that
+    came from the game is not something the player did; `Changed` is the other direction and
+    fires for user gestures only. Neither of them ever fires at mount, which is what lets a
+    rebuilt screen come back showing the value it had without announcing it as new.
+]]
+export type ControlHandle = {
+    Get: (self: ControlHandle) -> any,
+    --- Paints without calling `OnChange` or firing `Changed`; for state that came from outside.
+    Set: (self: ControlHandle, value: any) -> (),
+    --- User gestures only, never an echo of `Set`.
+    Changed: Signal<any>,
+}
+
+--[[
+    A control the framework knows how to drive: a name, the schema that name means, and how to
+    put one group of it on screen.
+
+    `Mount` is handed the widget library rather than the whole singleton, and that is the
+    point rather than an economy. A control paints and reports a gesture; the surest way to
+    keep the framework from ever spelling a game's channel name is not to give it the bus.
+    Everything a control legitimately needs -- `Drag`, `Drag2D` -- is on the library.
+
+    It is called once per group per assembly, on a scope that dies with the widget, and must
+    call `config` back for a gesture the player made and for nothing else.
+]]
+export type Control<Config> = {
+    Name: string,
+    Schema: WidgetSchema,
+    Mount: (
+        widgets: WidgetLibrary,
+        group: string,
+        parts: WidgetParts,
+        scope: Scope,
+        config: Config?
+    ) -> ControlHandle,
+}
+
+--[[
+    A control as the library holds one: `Control<Config>` with the config type erased, since
+    `Use` is handed a table keyed by group and cannot know what is in it either.
+
+    Written out rather than spelled `Control<any>`, and that is a Luau constraint rather than a
+    preference. `Control<Config>` names `WidgetLibrary` and `WidgetLibrary` names this, so the
+    two are mutually recursive -- and a recursive type may not be instantiated with a different
+    parameter on the way round. Keep the two shapes in step by hand; they are five lines.
+]]
+export type AnyControl = {
+    Name: string,
+    Schema: WidgetSchema,
+    Mount: (
+        widgets: WidgetLibrary,
+        group: string,
+        parts: WidgetParts,
+        scope: Scope,
+        config: any
+    ) -> ControlHandle,
+}
+
+--[[
+    What `Widgets:Use` hands back. It is not a `WidgetHandle`: `Get` answers with the control
+    driving a group rather than with the group's parts, and `Destroy` unmounts nothing.
+]]
+export type ControlUseHandle = {
+    --- Drops the config this call supplied. The control stays mounted -- what a group plays
+    --- is decided by `UnrestWidget` on its root, never by whether anybody asked for it.
+    Destroy: (self: ControlUseHandle) -> (),
+    --- The control driving `group` right now, or nil when nothing is.
+    Get: (self: ControlUseHandle, group: string) -> ControlHandle?,
+    --- Groups this control is currently driving, sorted.
+    Groups: (self: ControlUseHandle) -> { string },
 }
 
 export type WidgetLibrary = {
@@ -198,8 +322,41 @@ export type WidgetLibrary = {
         handle: Instance,
         track: Instance,
         onMove: (fraction: number) -> (),
-        onCommit: ((fraction: number) -> ())?
+        onCommit: ((fraction: number) -> ())?,
+        options: DragOptions?
     ) -> Scope,
+    --- `Drag` on both axes at once. Positions are `Vector2` fractions, 0..1 on each axis.
+    Drag2D: (
+        self: WidgetLibrary,
+        scope: Scope,
+        handle: Instance,
+        track: Instance,
+        onMove: (position: Vector2) -> (),
+        onCommit: ((position: Vector2) -> ())?
+    ) -> Scope,
+    --[[
+        Adds a control the library drives itself. Every group whose root carries
+        `UnrestWidget` equal to `control.Name` and whose required roles are present is mounted
+        on it, **whether or not anybody calls `Use`**: what a group plays is said in Studio.
+        Registering a name twice replaces it, the same way `Schemas.Register` does.
+    ]]
+    --- Mounts the registered controls onto every declared root. `Unrest:Start` calls it on the client.
+    Start: (self: WidgetLibrary) -> (),
+    Register: (self: WidgetLibrary, control: AnyControl) -> (),
+    --[[
+        Supplies a registered control's config, keyed by `UnrestGroup`, and hands back a
+        handle onto the controls it is driving. Calling it again replaces the config; groups
+        already mounted are re-mounted onto it at the value they were left at.
+    ]]
+    Use: (self: WidgetLibrary, name: string, config: { [string]: any }?) -> ControlUseHandle,
+    --[[
+        Every group every recipe knows about, wired or not, and why the unwired ones are
+        not. A report, not a warning: nothing here prints. The answer to "my widget never
+        connected" without the four manual checks.
+    ]]
+    Report: (self: WidgetLibrary) -> WidgetReport,
+    --- One sentence about one group, for the Output window and for tooling.
+    Explain: (self: WidgetLibrary, group: string) -> string,
     Destroy: (self: WidgetLibrary) -> (),
 }
 

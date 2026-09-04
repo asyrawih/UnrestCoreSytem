@@ -102,6 +102,8 @@ function Unrest:Start(): Types.Unrest
     ]]
     if context == "Client" then
         elements:Start()
+        -- Built-in controls drive every root that declares `UnrestWidget`, with no further call.
+        widgets:Start()
     end
 
     core:Start(singleton)

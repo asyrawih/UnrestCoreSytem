@@ -393,6 +393,8 @@ export type ElementManager = {
     Get: (self: ElementManager, instance: Instance) -> ManagedElement?,
     All: (self: ElementManager) -> { ManagedElement },
     Query: (self: ElementManager, descriptor: Descriptor, handlers: Handlers?) -> QueryHandle,
+    --- Why an instance does or does not match a descriptor, one clause at a time.
+    Explain: (self: ElementManager, descriptor: Descriptor, instance: Instance) -> string,
     Destroy: (self: ElementManager) -> (),
 }
 

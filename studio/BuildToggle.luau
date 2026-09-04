@@ -43,6 +43,9 @@ local function buat(nama: string, y: number)
 
     CollectionService:AddTag(akar, "Unrest")
     akar:SetAttribute("UnrestGroup", nama)
+    --- Akarnya menyebut skema yang dimainkan grup ini. Dibaca `Widgets:Report()` dan resep
+    --- `Each({ Widget = "Toggle" })`; tidak diwariskan, jadi tempatnya memang di sini.
+    akar:SetAttribute("UnrestWidget", "Toggle")
 
     local label = Instance.new("TextLabel")
     label.Name = "Label"

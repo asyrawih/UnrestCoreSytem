@@ -48,6 +48,7 @@ Baca berurutan. Empat halaman, dan setelah itu kamu sudah bisa kerja.
 | Arti sebuah atribut `Unrest*` | [Referensi Atribut](UI-ATTRIBUTES.md) |
 | Kelas ini punya handler apa saja | [Kosakata Handler](UI-HANDLERS.md) dan [Cakupan Adapter](UI-ADAPTERS.md) |
 | Bikin slider / toggle tanpa nulis query sendiri | [Widgets](API-WIDGETS.md) |
+| Ngatur tag dan atribut dari dalam Studio | [Plugin Studio](PLUGIN.md) |
 | Ada pesan galat merah di Output | [Pemecahan Masalah](TROUBLESHOOTING.md) |
 
 ---

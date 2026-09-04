@@ -16,33 +16,43 @@
 --[[
     Sliders.
 
-    A slider is four tagged parts that only mean something together, and `UnrestGroup` on their
-    shared root is what says which slider they belong to. Group is inheritable, so the root
-    carries it once and the parts beneath inherit it.
-
-    Adding a tenth slider means duplicating a Frame in Studio and changing one attribute. There
-    is no new role, no new query, and nothing to add here.
+    The framework drives the slider itself. A root carrying `UnrestGroup` and
+    `UnrestWidget = "Slider"` gets a working one -- painted, dragged, and remembered across a
+    rebuilt screen -- with no Luau at all. What is left in this file is the only part that is
+    the game's: what a slider's value *means*.
 
     What Studio needs, per slider:
 
-        Root   (Frame)        tag "Unrest", UnrestGroup = "Music"
-          Label               UnrestRole = "SliderLabel"
+        Root   (Frame)        tag "Unrest", UnrestGroup = "Musik", UnrestWidget = "Slider"
+          Label               UnrestRole = "SliderLabel"     -- optional
           Track               UnrestRole = "SliderTrack"
-            Fill              UnrestRole = "SliderFill"
+            Fill              UnrestRole = "SliderFill"      -- optional
             Knob (GuiButton)  UnrestRole = "SliderKnob"
 
-    The tag goes on the root only. The rest arrive by cascade.
+    The tag goes on the root only. The rest arrive by cascade. Adding a tenth slider means
+    duplicating a Frame in Studio and changing one attribute; there is nothing to add here.
+
+    WHY THE CHANNEL NAME IS HERE AND NOT IN THE CONTROL. `Volume.<group>` is this game's
+    vocabulary, and the framework must never spell one (CONVENTIONS). So the built-in Slider
+    paints and reports a gesture, and this file is where a gesture becomes a channel.
+
+    0..100 HERE, 0..1 THERE. The control works in fractions, because a fraction is what a
+    position along a track is. Whole percent is a presentation choice, so the conversion
+    happens at this boundary and `Actions` keeps the numbers it always had.
 
     TWO WAYS TO ACT ON THE VALUE, and they are not interchangeable.
 
       * Pass actions in, keyed by group. Each slider declares its own reaction, so there is no
         `if group == ...` chain and adding a slider never edits an existing handler.
-      * Subscribe to the channel. Every slider publishes `Volume.<group>` regardless, so
-        anything else on screen can follow it with `UnrestChannel = "Volume.Music"` and no code
-        at all, and any script can `Bridge:Subscribe` to it.
+      * Subscribe to the channel. A slider named here publishes `Volume.<group>` on every
+        move, so anything else on screen can follow it with `UnrestChannel = "Volume.Musik"`
+        and no code at all, and any script can `Bridge:Subscribe` to it.
 
-    A slider with no entry in the table still paints and still publishes. Actions are for a
-    reaction the caller owns; they are not what makes a slider work.
+    A GROUP WITH NO ENTRY still paints and still drags -- what is mounted is decided by
+    `UnrestWidget` on the root, never by this table -- but it publishes nothing, because
+    nothing here said what its value means. That is the one thing that changed when the
+    control moved into the framework: nothing publishes on a group's behalf any more, and
+    nothing is published at all until the player moves something.
 
     The split between change and commit matters. A volume slider wants every move, because the
     player is listening while they drag. Anything that costs something -- a request to the
@@ -51,9 +61,13 @@
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+--- The built-in control's config type, so a misspelled field is a strict-mode error here.
+local Slider = require(ReplicatedStorage.Unrest.Widgets.Controls.Slider)
 local Types = require(ReplicatedStorage.Unrest.Types)
-
-local ROLES = { "SliderTrack", "SliderFill", "SliderKnob", "SliderLabel" }
+--- Generated from the place by `Tooling/Vocab` (see `studio/ExportVocab.luau`). A widget name
+--- that is not in it is a widget no screen carries, and `--!strict` says so here rather than
+--- at Play.
+local Vocab = require(script.Parent.Parent.Vocab)
 
 --- What one slider does with its own value. Both are optional.
 export type Actions = {
@@ -66,64 +80,55 @@ export type Actions = {
 --- Keyed by `UnrestGroup`. A group with no entry simply has no reaction.
 export type Config = { [string]: Actions }
 
+--- Whole percent, which is what this game's `Volume.*` channels carry.
+local function percent(fraction: number): number
+    return math.round(fraction * 100)
+end
+
 return function(unrest: Types.Unrest, config: Config?): ()
     local actions: Config = config or {}
-    local seen: { [string]: boolean } = {}
+
+    --- One control config per group named above, with the channel written into it.
+    local wired: { [string]: Slider.SliderConfig } = {}
+    for group, mine in actions do
+        wired[group] = {
+            OnChange = function(fraction: number)
+                local value = percent(fraction)
+                unrest.Bridge:Publish(`Volume.{group}`, value)
+
+                local onChange = mine.OnChange
+                if onChange ~= nil then
+                    onChange(value)
+                end
+            end,
+
+            OnCommit = function(fraction: number)
+                local onCommit = mine.OnCommit
+                if onCommit ~= nil then
+                    onCommit(percent(fraction))
+                end
+            end,
+        }
+    end
+
+    local sliders = unrest.Widgets:Use(Vocab.Widgets.Slider, wired)
 
     --[[
         A key that matches no slider does nothing at all, and a misspelled group name is
-        exactly that. Silence is the failure mode this codebase keeps producing, so say it out
-        loud once the screen has had time to arrive.
+        exactly that. Silence is the failure mode this codebase keeps producing, so ask the
+        handle which groups it actually ended up driving once the screen has had time to
+        arrive, and say the rest out loud.
     ]]
     task.delay(5, function()
+        local driving: { [string]: boolean } = {}
+        for _, group in sliders:Groups() do
+            driving[group] = true
+        end
+
         for group in actions do
-            if not seen[group] then
+            if not driving[group] then
                 warn(`[Slider] actions were given for "{group}" but no slider carries that UnrestGroup.`)
             end
         end
     end)
-
-    unrest.Widgets:Each({
-        Required = ROLES,
-
-        OnReady = function(group: string, parts: Types.WidgetParts, scope: Types.Scope)
-            seen[group] = true
-
-            local mine: Actions = actions[group] or {}
-            local track = parts.SliderTrack :: Frame
-            local fill = parts.SliderFill :: Frame
-            local knob = parts.SliderKnob :: GuiObject
-            local label = parts.SliderLabel :: TextLabel
-
-            --- Paints, publishes, and returns the whole-number value the caller sees.
-            local function paint(fraction: number): number
-                local value = math.round(fraction * 100)
-
-                fill.Size = UDim2.fromScale(fraction, 1)
-                knob.Position = UDim2.fromScale(fraction, 0.5)
-                label.Text = `{group}: {value}%`
-                unrest.Bridge:Publish(`Volume.{group}`, value)
-
-                return value
-            end
-
-            paint(0)
-
-            --[[
-                The drag goes on the scope the framework handed over, so a screen that is
-                rebuilt -- or a slider that is untagged while the game runs -- takes its own
-                input connections with it instead of leaving them attached to a dead knob.
-            ]]
-            unrest.Widgets:Drag(scope, knob, track, function(fraction: number)
-                local value = paint(fraction)
-                if mine.OnChange ~= nil then
-                    mine.OnChange(value)
-                end
-            end, function(fraction: number)
-                if mine.OnCommit ~= nil then
-                    mine.OnCommit(math.round(fraction * 100))
-                end
-            end)
-        end,
-    })
 end

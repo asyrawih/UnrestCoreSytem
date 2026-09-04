@@ -10,8 +10,12 @@
 #
 # https://discord.gg/MZYTABSSfb
 
-# Rojo sourcemap — regenerated on demand (luau-lsp.nvim rewrites it constantly)
+# Rojo sourcemap — regenerated on demand (luau-lsp.nvim rewrites it constantly).
+# The plugin has its own project and so its own sourcemap, and it must sit inside `plugin/`:
+# rojo writes its paths relative to the project file and luau-lsp resolves them against the
+# working directory, so both stand there.
 sourcemap.json
+plugin/plugin-sourcemap.json
 
 # Wally-installed dependency trees. wally.lock IS tracked (see below) so these
 # are fully reproducible from `wally install`.

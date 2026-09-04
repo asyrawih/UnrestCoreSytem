@@ -88,3 +88,27 @@ jobs:
           name: Unrest-rbxm
           path: Unrest.rbxm
           if-no-files-found: error
+
+      # ---- the plugin, which is its own Rojo project and so its own sourcemap ----
+
+      - name: Plugin sourcemap
+        # Rojo writes a sourcemap's paths relative to the project file and luau-lsp resolves
+        # them against the working directory, so both have to stand in `plugin/`.
+        working-directory: plugin
+        run: rojo sourcemap default.project.json --output plugin-sourcemap.json
+
+      - name: Analyze the plugin
+        working-directory: plugin
+        run: |
+          luau-lsp analyze --definitions=/tmp/globalTypes.d.luau \
+            --sourcemap=plugin-sourcemap.json $(find src -name '*.luau')
+
+      - name: Build the plugin
+        # Never mounted into the place: it is installed into Studio, not replicated to clients.
+        run: rojo build plugin/default.project.json --output UnrestPlugin.rbxm
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UnrestPlugin-rbxm
+          path: UnrestPlugin.rbxm
+          if-no-files-found: error

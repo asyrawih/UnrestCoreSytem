@@ -56,16 +56,25 @@ jobs:
           luau-lsp analyze --definitions=/tmp/globalTypes.d.luau --sourcemap=sourcemap.json $(find src -name '*.luau')
           selene .
           stylua --check .
+          cd plugin
+          rojo sourcemap default.project.json --output plugin-sourcemap.json
+          luau-lsp analyze --definitions=/tmp/globalTypes.d.luau \
+            --sourcemap=plugin-sourcemap.json $(find src -name '*.luau')
 
       - name: Build the distributable model
         run: rojo build model.project.json --output Unrest.rbxm
+
+      - name: Build the Studio plugin
+        # A second artefact with a second audience: `Unrest.rbxm` goes into a place,
+        # `UnrestPlugin.rbxm` goes into ~/Documents/Roblox/Plugins.
+        run: rojo build plugin/default.project.json --output UnrestPlugin.rbxm
 
       - name: Create the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         # `gh` ships on the runner, so this needs no third-party action.
         run: |
-          gh release create "$GITHUB_REF_NAME" Unrest.rbxm \
+          gh release create "$GITHUB_REF_NAME" Unrest.rbxm UnrestPlugin.rbxm \
             --title "$GITHUB_REF_NAME" \
             --generate-notes
 

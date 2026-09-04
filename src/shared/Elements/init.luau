@@ -771,6 +771,18 @@ function Elements.new(adapters: Types.AdapterRegistry, bridge: Types.Bridge): Ty
         return Query.new(adapters, descriptor, handlers)
     end
 
+    --[[
+        Why one instance does or does not match a descriptor, clause by clause.
+
+        The door onto `Selector.explain`, which is where the sentence is built -- the same
+        predicate the query filters on answers the question, so an explanation cannot say
+        `ok` about a clause the match rejected. A query that comes back empty says only that;
+        this says which of the five conditions turned an instance away, and what it actually is.
+    ]]
+    function manager:Explain(descriptor: Types.Descriptor, instance: Instance): string
+        return Selector.explain(descriptor, instance)
+    end
+
     function manager:Destroy(): ()
         if destroyed then
             return
