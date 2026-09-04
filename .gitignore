@@ -40,3 +40,5 @@ sourcemap.json
 # are the two below.
 node_modules/
 /build
+graphify-out
+bench
