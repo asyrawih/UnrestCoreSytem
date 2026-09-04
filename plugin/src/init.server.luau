@@ -138,6 +138,7 @@ end
 
 local context: Framework.Context = {
     Root = StarterGui,
+    Plugin = plugin,
     Record = record,
     Select = function(instances: { Instance })
         Selection:Set(instances)

@@ -62,6 +62,13 @@ teks dan tidak pernah menyentuh Instance. Tidak ada satu berkas runtime pun yang
 meng-`require`-nya, dan keduanya tidak pernah meng-`require` `Widgets/init` atau
 `Elements/init` — supaya sebuah plugin Studio bisa memuatnya di tempat yang belum jalan.
 
+Setengah `Vocab` yang menulis dipisah dari yang menghasilkan. `Vocab.target()` mencari
+ModuleScript bertag `UnrestVocab` di tempat yang terbuka, `Vocab.body(text)` membuang baris
+tanggal supaya dua hasil render yang isinya sama dianggap sama, dan `Vocab.write(module, text)`
+menulis lewat `ScriptEditorService:UpdateSourceAsync` — mengembalikan `false` tanpa menulis
+apa-apa kalau yang berubah cuma tanggalnya. Yang membawa tulisan itu ke disk adalah two-way
+sync di plugin Rojo; `render` sendiri tetap murni.
+
 Preset dan skema milik game didaftarkan saat startup, jadi di mode edit tabelnya kosong dan
 perkakas itu buta. Jalan keluarnya satu `ModuleScript` murni-data bertag `UnrestManifest` —
 di repo ini `src/game-client/Manifest.luau`. Bootstrap client meng-`require`-nya dan
@@ -88,7 +95,7 @@ Yang belum punya halaman sendiri, tapi sudah ada di `src/shared`:
 | --- | --- |
 | `Widgets/Schemas` | `Get`, `List`, `Roles`, `Register`, `check`, `complete` — dari apa saja sebuah widget terbuat, sebagai data |
 | `Tooling/Lint` | `check(root, options?)`, `format(findings)` — setiap aturan yang diperiksa perkakas Studio terhadap sebuah layar, sebagai fungsi murni |
-| `Tooling/Vocab` | `collect(root)`, `render(vocabulary, stamp)`, `generate(root)`, `isIdentifier` — mengubah peran, grup, dan widget yang ada di layar menjadi `Vocab.luau` bertipe |
+| `Tooling/Vocab` | `collect(root)`, `render(vocabulary, stamp)`, `generate(root)`, `isIdentifier` — mengubah peran, grup, dan widget yang ada di layar menjadi `Vocab.luau` bertipe; `target()`, `body(text)`, `write(module, text)` — menulis hasilnya ke ModuleScript bertag `UnrestVocab` |
 
 ---
 
@@ -114,7 +121,7 @@ Yang paling sering dipakai, dalam satu tabel.
 | Mendaftarkan preset | `Presets.Register("TombolUtama", { ... })` |
 | Menyimpan preset dan skema milik game | `src/game-client/Manifest.luau`, bertag `UnrestManifest` |
 | Memeriksa layar di Studio | tempel `studio/LintUnrest.luau` di Command Bar |
-| Mengekspor kosakata layar jadi tipe | tempel `studio/ExportVocab.luau` di Command Bar |
+| Mengekspor kosakata layar jadi tipe | panel **Export** di plugin, atau tempel `studio/ExportVocab.luau` di Command Bar |
 | Membereskan koneksi sekaligus | `unrest.Scope.destroy(scope)` |
 
 ---

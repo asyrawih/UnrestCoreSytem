@@ -87,6 +87,12 @@ rojo serve
 
 Then connect with the Rojo plugin in Studio (default port 34872).
 
+**Turn on the Rojo plugin's two-way sync.** It is what lets the Unrest plugin's Export
+panel keep `src/game-client/Vocab.luau` current: the plugin writes the generated text into
+the `UnrestVocab`-tagged ModuleScript inside the place, and two-way sync is the half that
+carries it back to the file. With it off the write still happens, it just waits in Rojo's
+Changes viewer.
+
 ## Dependencies
 
 Declared in `wally.toml`. Two, and only one of them is the framework's:

@@ -292,8 +292,18 @@ bukan kelalaian: nama channel dan perintah milik game, dan framework tidak boleh
 (lihat CONVENTIONS). Makanya `Mount` dikasih **library widget**, bukan singleton `Unrest` —
 tidak ada bus dalam jangkauannya untuk diterbiti.
 
-`OnChange` dan `OnCommit` adalah pintu keluarnya. Lihat
-`src/game-client/Example/Slider/init.luau`: di sanalah sebuah geseran jadi `Volume.<group>`.
+`OnChange` dan `OnCommit` adalah pintu keluarnya. Di kode game, di sanalah sebuah geseran
+jadi `Volume.<group>`:
+
+```luau
+unrest.Widgets:Use(Vocab.Widgets.Slider, {
+    [Vocab.Groups.Musik] = {
+        OnChange = function(fraction: number)
+            unrest.Bridge:Publish("Volume.Musik", math.round(fraction * 100))
+        end,
+    },
+})
+```
 
 ### `Widgets:Register(control)` — control buatan sendiri
 
@@ -480,14 +490,44 @@ layar — tapi semua yang mereka jalankan ikut hilang, termasuk nilai per grup d
 
 ## Contoh lengkap
 
-Lihat `src/game-client/Example/Slider/init.luau` dan
-`src/game-client/Example/Toggle/init.luau`. Keduanya ditulis persis di atas API ini, dan
-keduanya memakai bentuk yang sama: aksi dikunci per `UnrestGroup`, jadi menambah kontrol
-tidak pernah menyunting handler yang sudah ada.
+Sebuah fitur game yang memakai dua control bawaan sekaligus. Bentuknya selalu sama: aksi
+dikunci per `UnrestGroup`, jadi menambah kontrol di Studio tidak pernah menyunting handler
+yang sudah ada, dan nama channel tetap di sini, di kode game.
 
 ```luau
-require(script.Toggle)(unrest, {
-    Fullscreen = { Initial = true, OnChange = function(nilai) ... end },
-    Notifikasi = { OnChange = function(nilai) ... end },
-})
+local Vocab = require(script.Parent.Vocab) -- dihasilkan Tooling/Vocab dari place
+
+return function(unrest: Types.Unrest): ()
+    unrest.Widgets:Use(Vocab.Widgets.Slider, {
+        [Vocab.Groups.Musik] = {
+            Initial = 0.5,
+            OnChange = function(fraction: number)
+                unrest.Bridge:Publish("Volume.Musik", math.round(fraction * 100))
+            end,
+        },
+        [Vocab.Groups.Efek] = {
+            OnCommit = function(fraction: number)
+                unrest.Bridge:Publish("Volume.Efek", math.round(fraction * 100))
+            end,
+        },
+    })
+
+    unrest.Widgets:Use(Vocab.Widgets.Toggle, {
+        [Vocab.Groups.Fullscreen] = {
+            Initial = true,
+            OnChange = function(nilai: boolean)
+                unrest.Bridge:Publish("Toggle.Fullscreen", nilai)
+            end,
+        },
+        [Vocab.Groups.Notifikasi] = {
+            OnChange = function(nilai: boolean)
+                unrest.Bridge:Publish("Toggle.Notifikasi", nilai)
+            end,
+        },
+    })
+end
 ```
+
+Slider yang grupnya tidak disebut tetap di-mount dan tetap bisa digeser; dia hanya tidak
+menerbitkan apa pun, karena tidak ada yang bilang nilainya berarti apa. Benih layarnya ada di
+`studio/BuildSliderMulti.luau` dan `studio/BuildToggle.luau`.

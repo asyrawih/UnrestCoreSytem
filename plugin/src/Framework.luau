@@ -76,12 +76,15 @@ export type Framework = {
 }
 
 --[[
-    What every panel is handed besides the framework: the one root they all read, and the two
-    things only the host may do -- edit under an undo recording, and move Studio's selection.
+    What every panel is handed besides the framework: the one root they all read, and the three
+    things only the host may do -- edit under an undo recording, move Studio's selection, and
+    remember a setting between sessions.
 ]]
 export type Context = {
     --- `StarterGui`. Lint scans it, Outline groups it, Vocab is generated from it.
     Root: Instance,
+    --- The host's `plugin` global. Panels use it for `GetSetting`/`SetSetting` and nothing else.
+    Plugin: Plugin,
     --- Runs `edit` inside one `ChangeHistoryService` recording, so Ctrl+Z undoes all of it.
     Record: (name: string, edit: () -> ()) -> (),
     --- Puts these in Studio's `Selection`, which comes back as a `refresh` on every panel.

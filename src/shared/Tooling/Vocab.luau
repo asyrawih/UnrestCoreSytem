@@ -22,9 +22,17 @@
     nothing.
 
     Three doors call this one function: the Command Bar script `studio/ExportVocab.luau`, an
-    agent session over MCP running that same script, and (later) the plugin's Export panel.
-    The generator lives in the framework rather than in any of them so that all three emit
-    the same bytes.
+    agent session over MCP running that same script, and the plugin's Export panel. The
+    generator lives in the framework rather than in any of them so that all three emit the
+    same bytes.
+
+    HOW THE TEXT REACHES DISK. It does not, on its own. `write` puts the text into the
+    `UnrestVocab`-tagged ModuleScript in the open place, through
+    `ScriptEditorService:UpdateSourceAsync`, and that is as far as a Studio plugin can go --
+    there is no filesystem behind it. With the Rojo plugin's TWO-WAY SYNC on, Rojo notices the
+    changed `Source` and writes `src/game-client/Vocab.luau` a moment later; with it off the
+    edit stays in the place and shows up in Rojo's Changes viewer, to be applied or copied by
+    hand. Either way the bytes are the ones `render` produced.
 
     PURE ENOUGH TO TEST. `render` never touches an Instance: it takes a `Vocabulary` and a
     date stamp and returns a string, sorted throughout, so calling it twice on the same input
@@ -36,6 +44,9 @@
     incomplete union would make `--!strict` reject correct code. Channel names belong to the
     game and are typed by the game.
 ]]
+
+local CollectionService = game:GetService("CollectionService")
+local ScriptEditorService = game:GetService("ScriptEditorService")
 
 local Constants = require(script.Parent.Parent.Constants)
 local Selector = require(script.Parent.Parent.Adapters.Selector)
@@ -50,6 +61,14 @@ export type Vocabulary = {
 }
 
 local INDENT = "    "
+--[[
+    The head of the one generated line that moves on its own.
+
+    `render` writes it and `body` strips it, from this one string, because a writer that
+    disagreed with the generator about which line the date is on would rewrite the file every
+    day and call it a change.
+]]
+local STAMP_PREFIX = "-- DIHASILKAN oleh Tooling/Vocab"
 --- The column width `stylua.toml` enforces; a union longer than this is wrapped like stylua wraps it.
 local STYLUA_WIDTH = 120
 
@@ -235,7 +254,7 @@ function Vocab.render(vocabulary: Vocabulary, stamp: string): string
 
     local lines: { string } = {
         "--!strict",
-        `-- DIHASILKAN oleh Tooling/Vocab dari StarterGui pada {stamp}. Jangan disunting; ekspor ulang.`,
+        `{STAMP_PREFIX} dari StarterGui pada {stamp}. Jangan disunting; ekspor ulang.`,
         "",
     }
 
@@ -306,6 +325,74 @@ end
 --- `collect` then `render`, stamped with today's date. The whole door, for the three callers.
 function Vocab.generate(root: Instance): string
     return Vocab.render(Vocab.collect(root), os.date("%Y-%m-%d"))
+end
+
+--[[
+    The ModuleScript the generated text belongs in: the `Constants.VocabTag` module in the
+    DataModel, or nil when the place has none.
+
+    Found by tag, not by path, for the reason `ManifestTag` is: the file is the game's and
+    where a game mounts it is the game's business. A place is expected to tag exactly one; the
+    lowest full name wins so that a place which tagged two still gets the same answer twice in
+    a row rather than whichever one `GetTagged` happened to hand back first.
+
+    A TAG OUTLIVES ITS INSTANCE, so `IsDescendantOf(game)` is asked here for the same reason
+    `Selector.isManaged` asks it -- a module somebody destroyed is not somewhere to write.
+]]
+function Vocab.target(): ModuleScript?
+    local best: ModuleScript? = nil
+
+    for _, tagged in CollectionService:GetTagged(Constants.VocabTag) do
+        if not tagged:IsA("ModuleScript") or not tagged:IsDescendantOf(game) then
+            continue
+        end
+        local module: ModuleScript = tagged
+        local current = best
+        if current == nil or module:GetFullName() < current:GetFullName() then
+            best = module
+        end
+    end
+
+    return best
+end
+
+--[[
+    `text` with its stamp line dropped.
+
+    The date is the one line that moves without anybody touching the screen, so comparing two
+    renders line for line would report a change every midnight. Comparing bodies asks the only
+    question a writer cares about: did the vocabulary change?
+]]
+function Vocab.body(text: string): string
+    local kept: { string } = {}
+
+    for _, line in string.split(text, "\n") do
+        if string.sub(line, 1, #STAMP_PREFIX) ~= STAMP_PREFIX then
+            table.insert(kept, line)
+        end
+    end
+
+    return table.concat(kept, "\n")
+end
+
+--[[
+    Puts `text` into `module`, and says whether it had to. False means the module already said
+    this and nothing was written -- see `body` for what "already said this" ignores.
+
+    `UpdateSourceAsync` is the only supported way to write a script somebody may have open:
+    assigning `Source` discards whatever is in the editor buffer, and that buffer is what Rojo
+    reads. It yields, so this yields; call it from a button or a task, not from inside a signal
+    handler that has to return.
+]]
+function Vocab.write(module: ModuleScript, text: string): boolean
+    if Vocab.body(ScriptEditorService:GetEditorSource(module)) == Vocab.body(text) then
+        return false
+    end
+
+    ScriptEditorService:UpdateSourceAsync(module, function(): string
+        return text
+    end)
+    return true
 end
 
 return Vocab

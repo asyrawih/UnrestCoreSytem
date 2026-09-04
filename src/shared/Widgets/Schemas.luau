@@ -194,8 +194,9 @@ function Schemas.complete(result: SchemaCheck): boolean
 end
 
 --[[
-    The three the framework drives. Derived from the controls in `game-client/Example`, with
-    one deliberate loosening: a Slider needs only a track and a knob. A fill or a label that
+    The three the framework drives, matching the seeds in `studio/BuildSliderMulti.luau` and
+    `studio/BuildToggle.luau`, with one deliberate loosening: a Slider needs only a track and a
+    knob. A fill or a label that
     is absent is a slider that does not show one, not a broken slider.
 ]]
 Schemas.Register({

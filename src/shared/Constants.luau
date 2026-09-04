@@ -61,6 +61,15 @@ local Constants = {
     ManifestTag = "UnrestManifest",
 
     --[[
+        The tag on the ModuleScript the generated vocabulary is written into.
+
+        `Tooling/Vocab` renders the text; this tag is how a writer -- the plugin's Export
+        panel, `studio/ExportVocab.luau` -- finds the module to put it in. Tagged once, like
+        the manifest, so no writer carries a path to a file that belongs to the game.
+    ]]
+    VocabTag = "UnrestVocab",
+
+    --[[
         Attributes a designer sets in Studio to wire an element with no code at all.
         Every one is optional; an element with only the tag is still adopted and queryable.
     ]]

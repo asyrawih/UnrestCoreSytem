@@ -19,7 +19,7 @@
 
       "Packages": {
         "$path": "Packages"
-      }
+      },
 
       "Plugin": {
         "$path": "plugin"

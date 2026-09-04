@@ -1,22 +1,9 @@
 --!strict
---[[
-                     ,-.--, ,--.-,,-,--,.--, .-.--, .-._         ,---.      .-._
-  _,..---._ .--.-.  /=/, .'/==/  /|=|  ||  |=| -\==Y==/ \  .-._.--.'  \    /==/ \  .-._
-/==/,   -  \\==\ -\/=/- /  |==|_ ||=|, ||  `-' _|==|==|, \/ /, |==\-/\ \   |==|, \/ /, /
-|==|   _   _\\==\ `-' ,/   |==| ,|/=| _|\     , |==|==|-  \|  |/==/-|_\ |  |==|-  \|  |
-|==|  .=.   | |==|,  - |   |==|- `-' _ | `--.  -|==|==| ,  | -|\==\,   - \ |==| ,  | -|
-|==|,|   | -|/==/   ,   \  |==|  _     |     \_ |==|==| -   _ |/==/ -   ,| |==| -   _ |
-|==|  '='   /==/, .--, - \ |==|   .-. ,\     |  \==\==|  /\ , /==/-  /\ - \|==|  /\ , |
-|==|-,   _`/\==\- \/=/ , / /==/, //=/  |      \ /==/==/, | |- \==\ _.\=\.-'/==/, | |- |
-`-.`.____.'  `--`-'  `--`  `--`-' `-`--`       `--``--`./  `--``--`        `--`./  `--`
-
-    https://discord.gg/MZYTABSSfb
-]]
-
 -- DIHASILKAN oleh Tooling/Vocab dari StarterGui pada 2026-09-04. Jangan disunting; ekspor ulang.
 
 export type Role =
-    "ServerInfoClose"
+    "PlayerMenu"
+    | "ServerInfoClose"
     | "ServerInfoConnections"
     | "ServerInfoDivider"
     | "ServerInfoItems"
@@ -42,6 +29,8 @@ export type Widget = "Slider" | "Toggle"
 
 local Vocab = {
     Roles = table.freeze({
+        --- InGame.PlayerMenu (Frame)
+        PlayerMenu = "PlayerMenu" :: "PlayerMenu",
         --- InGame.ServerListContainer.SidePanelServer.Header.CloseButton (TextButton)
         ServerInfoClose = "ServerInfoClose" :: "ServerInfoClose",
         --- InGame.ServerListContainer.SidePanelServer.List.ConnectionsSection (Frame)

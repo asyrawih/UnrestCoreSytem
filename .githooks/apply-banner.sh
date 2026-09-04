@@ -34,6 +34,13 @@ fi
 
 # Paths are matched repo-relative, as globs.
 is_skipped() {
+	# Generated files. `Tooling/Vocab` renders `src/game-client/Vocab.luau` from the place and
+	# the Studio plugin rewrites it whenever the screen changes; a banner stamped here would be
+	# stripped by the next export and stamped again by the next commit, forever. Recognised by
+	# the stamp line the generator writes, so a second generated file needs no new rule.
+	if [ -f "$1" ] && head -n 3 "$1" 2>/dev/null | grep -q '^-- DIHASILKAN oleh Tooling/Vocab'; then
+		return 0
+	fi
 	case "$1" in
 		# Third-party code. Reformatting vendor/Scythe.luau would modify an MPL-2.0 file
 		# and make it undiffable against upstream -- see NOTICE.md and .styluaignore.

@@ -118,13 +118,36 @@ Dua aksi:
 
 ### Export
 
-Menjalankan `Tooling/Vocab.generate(StarterGui)` dan menampilkannya di kotak teks read-only.
-Salin isinya apa adanya ke `src/game-client/Vocab.luau`.
+Menjalankan `Tooling/Vocab.generate(StarterGui)`, menampilkannya di kotak teks read-only, dan
+menuliskannya ke modul kosakata milik tempat ini.
 
-**Studio tidak punya API papan klip untuk plugin**, dan itu ditulis di panelnya, bukan
-disiasati: klik di dalam kotak, Ctrl+A, Ctrl+C. Rute yang bisa menulis ke disk adalah
-`studio/ExportVocab.luau` lewat Command Bar atau MCP. Ketiganya memanggil generator yang sama,
-jadi hasilnya identik byte per byte.
+**Sasarannya dicari lewat tag, bukan jalur.** ModuleScript pertama yang bertag `UnrestVocab`
+adalah tempat teksnya ditulis — di repo ini `src/game-client/Vocab.luau`, yang mendapat tagnya
+dari `Vocab.meta.json` di sebelahnya. Tanpa modul bertag, panelnya bilang begitu dalam satu
+kalimat: buat satu ModuleScript di pohon yang di-mount Rojo dan beri tag itu.
+
+Dua kontrol:
+
+- **Tulis ke Vocab** — sekali klik, satu Ctrl+Z (`context.Record`). Kalau yang berubah cuma
+  baris tanggal, tidak ada yang ditulis dan panelnya bilang *tidak ada perubahan*; kalau ada,
+  panelnya menyebut nama lengkap sasaran dan berapa bita yang masuk.
+- **Otomatis** — diingat per instalasi lewat `plugin:GetSetting("UnrestVocabAuto")`. Selagi
+  menyala, panelnya menghasilkan ulang satu detik setelah `StarterGui` tenang dan menulis.
+  Pemicunya: `DescendantAdded` / `DescendantRemoving`, tag `Unrest` yang dipasang atau dilepas,
+  dan `AttributeChanged` pada setiap descendant terkelola untuk `UnrestRole`, `UnrestGroup`,
+  `UnrestWidget`, dan `UnrestPreset` — menyunting atribut adalah kasus yang paling sering, dan
+  tidak ada satu sinyal pun yang mencakup seluruh pohon untuk itu, jadi koneksinya satu per
+  instance dan dirakit ulang setiap kali pohonnya berubah.
+
+**Plugin menulis ke ModuleScript di dalam place, bukan ke disk.** Yang membuatnya mendarat di
+berkas adalah **two-way sync** di plugin Rojo; kalau mati, perubahannya tetap ada di place dan
+muncul di penampil Changes milik Rojo untuk diterapkan atau disalin tangan. Kalimat itu ada di
+panelnya juga.
+
+Kotak read-only tetap ada karena **Studio tidak punya API papan klip untuk plugin**: klik di
+dalam kotak, Ctrl+A, Ctrl+C. `studio/ExportVocab.luau` lewat Command Bar atau MCP melakukan hal
+yang sama tanpa panel. Ketiga pintu memanggil generator dan penulis yang sama, jadi hasilnya
+identik byte per byte.
 
 ---
 
@@ -152,6 +175,7 @@ plugin baru.**
 | Skema widget | `src/shared/Widgets/Schemas.luau` |
 | Aturan validasi dan kalimatnya | `src/shared/Tooling/Lint.luau` |
 | Generator kosakata | `src/shared/Tooling/Vocab.luau` |
+| Tempat berkas kosakata ditulis | ModuleScript bertag `UnrestVocab` |
 | Preset dan skema milik game | ModuleScript bertag `UnrestManifest` |
 
 `plugin/src/Framework.luau` adalah satu-satunya file yang tahu di mana benda-benda itu berada.

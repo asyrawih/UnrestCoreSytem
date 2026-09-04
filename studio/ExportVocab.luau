@@ -16,14 +16,18 @@
 --[[
     Export Vocab -- tempel di Command Bar Studio, lalu Enter.
 
-    Mencetak isi `src/game-client/Vocab.luau` yang dihasilkan dari `StarterGui`: peran, grup,
-    dan widget yang benar-benar ada di layar, sebagai union bertipe. Salin keluarannya ke
-    berkas itu apa adanya; jangan disunting tangan, ekspor ulang.
+    Menghasilkan isi `src/game-client/Vocab.luau` dari `StarterGui`: peran, grup, dan widget
+    yang benar-benar ada di layar, sebagai union bertipe.
 
-    Plugin Studio tidak punya akses berkas, jadi menyalin adalah rute yang pasti jalan.
+    Kalau ada ModuleScript bertag `UnrestVocab`, isinya langsung ditulis ke sana dan yang
+    dicetak cuma satu baris status. Dengan two-way sync menyala di plugin Rojo, berkasnya di
+    disk ikut berubah beberapa detik kemudian; kalau mati, perubahannya menunggu di penampil
+    Changes milik Rojo.
+
+    Tanpa modul bertag, teksnya dicetak apa adanya -- salin ke berkas itu tanpa disunting.
 
     PINTU MCP. `execute_luau` menjalankan kode yang sama dan menangkap keluarannya, jadi sesi
-    agen bisa menulis hasilnya langsung ke disk tanpa menyalin tangan.
+    agen bisa memicu penulisan atau mengambil teksnya sendiri.
 ]]
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -31,4 +35,16 @@ local StarterGui = game:GetService("StarterGui")
 
 local Vocab = require(ReplicatedStorage.Unrest.Tooling.Vocab)
 
-print(Vocab.generate(StarterGui))
+local source = Vocab.generate(StarterGui)
+local target = Vocab.target()
+
+if target == nil then
+    print(source)
+else
+    local changed = Vocab.write(target, source)
+    if changed then
+        print(`[Vocab] ditulis {#source} bita ke {target:GetFullName()}`)
+    else
+        print(`[Vocab] tidak ada perubahan; {target:GetFullName()} sudah mutakhir`)
+    end
+end
