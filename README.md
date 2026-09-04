@@ -98,6 +98,7 @@ Declared in `wally.toml`. Two, and only one of them is the framework's:
 
 ```sh
 wally install     # writes ./Packages and wally.lock
+scripts/fix-packages.sh   # repairs elitriare/bytenet-max@1.0.0, which ships a misnamed module
 ```
 
 `wally.lock` is tracked; `Packages/`, `DevPackages/` and `ServerPackages/` are not.

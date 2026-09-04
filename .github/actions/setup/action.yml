@@ -37,6 +37,13 @@ runs:
       # in a source checkout, so the sourcemap has a hole in it without this.
       run: wally install
 
+    - name: Repair Wally packages
+      shell: bash
+      # elitriare/bytenet-max@1.0.0 publishes `namespaceDependencies.luau` but requires
+      # `namespacesDependencies`, so the package cannot load as installed. Idempotent; see
+      # scripts/fix-packages.sh.
+      run: scripts/fix-packages.sh
+
     - name: Fetch Roblox type definitions
       shell: bash
       run: |
